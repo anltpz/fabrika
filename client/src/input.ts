@@ -22,11 +22,17 @@ import {
 import type { BuildingState, ClientMsg, InputState } from '@fabrika/shared';
 import type { GhostSpec, Renderer } from './render/renderer';
 import type { GameState } from './state';
+import { trainAt } from './state';
 import { costChips } from './ui/dom';
 import type { Hud } from './ui/hud';
 import type { Panels } from './ui/panels';
 
 type Mode = 'none' | 'build' | 'dismantle' | 'bpSelect' | 'bpPlace';
+
+/** Sürükleyerek çizilen yapılar */
+function isDraggable(type: string): boolean {
+  return isBelt(type) || type === 'rail' || type === 'pipe';
+}
 
 const DEFAULT_HOTBAR = ['belt_mk1', 'miner_mk1', 'smelter', 'constructor', 'assembler', 'splitter', 'power_pole', 'biomass_burner', 'storage'];
 
@@ -162,7 +168,7 @@ export class Controller {
     if (this.mode === 'build') {
       const def = BUILDINGS[this.buildType];
       const dirs = ['→', '↓', '←', '↑'];
-      this.hud.setBanner(`İnşa: ${def.name} ${dirs[this.rot]}  ·  R döndür · Sağ tık iptal${isBelt(this.buildType) ? ' · Sürükleyerek çiz' : ''}`, '', costChips(def.cost, this.state.inventory));
+      this.hud.setBanner(`İnşa: ${def.name} ${dirs[this.rot]}  ·  R döndür · Sağ tık iptal${isDraggable(this.buildType) ? ' · Sürükleyerek çiz' : ''}`, '', costChips(def.cost, this.state.inventory));
     } else if (this.mode === 'bpSelect') {
       this.hud.setBanner('Plan oluştur: kaydedilecek alanı fareyle sürükleyerek seç · Sağ tık iptal', 'plan');
     } else if (this.mode === 'bpPlace') {
@@ -243,7 +249,7 @@ export class Controller {
       return;
     }
     if (this.mode === 'build') {
-      if (isBelt(this.buildType)) {
+      if (isDraggable(this.buildType)) {
         const [tx, ty] = this.mouseTile();
         this.dragStart = { x: tx, y: ty };
       } else {
@@ -252,6 +258,9 @@ export class Controller {
       }
       return;
     }
+    const [wmx, wmy] = this.mouseWorld();
+    const tid = trainAt(this.state, wmx, wmy);
+    if (tid !== undefined && this.mode === 'none') { this.panels.open('train', tid); return; }
     const b = this.hoveredBuilding();
     if (this.mode === 'dismantle') {
       if (b && b.type !== 'hub') this.send({ t: 'dismantle', id: b.id });
@@ -399,20 +408,21 @@ export class Controller {
     if (this.mode === 'build') {
       const def = BUILDINGS[this.buildType];
       const showPower = !!(def.power || def.powerGen || this.buildType === 'power_pole');
-      if (isBelt(this.buildType)) {
+      if (isDraggable(this.buildType)) {
         const path = this.dragStart ? this.beltPath(this.dragStart.x, this.dragStart.y, tx, ty) : [{ x: tx, y: ty, dir: this.rot }];
         ghost = {
           type: this.buildType,
           showPower,
           tiles: path.map((p) => {
             const ex = this.state.buildingAt(p.x, p.y);
-            const ok = ex && isBelt(ex.type) ? true : this.state.canPlace(this.buildType, p.x, p.y, p.dir, true) === null;
+            const ok = ex && ex.type === this.buildType ? true : ex && isBelt(ex.type) && isBelt(this.buildType) ? true : this.state.canPlace(this.buildType, p.x, p.y, p.dir, true) === null;
             return { x: p.x, y: p.y, rot: p.dir, ok };
           }),
         };
       } else {
         const [x, y] = this.placementOrigin();
-        ghost = { type: this.buildType, showPower, tiles: [{ x, y, rot: this.rot, ok: this.state.canPlace(this.buildType, x, y, this.rot) === null }] };
+        const ok = this.buildType === 'locomotive' ? this.state.buildingAt(x, y)?.type === 'rail' : this.state.canPlace(this.buildType, x, y, this.rot) === null;
+        ghost = { type: this.buildType, showPower, tiles: [{ x, y, rot: this.rot, ok }] };
       }
     }
     if (this.mode === 'bpSelect') {
@@ -441,7 +451,14 @@ export class Controller {
     if (this.panels.isOpen() || this.mode === 'build' || this.mode.startsWith('bp')) { this.hud.showTooltip(0, 0, null); this.tooltipKey = ''; return; }
     let key = '';
     let html: string | null = null;
-    if (b) {
+    const [wmx, wmy] = this.mouseWorld();
+    const tid = trainAt(this.state, wmx, wmy);
+    const STATE: Record<string, string> = { moving: 'Yolda', loading: 'İstasyonda', idle: 'Sefer yok', blocked: 'Yol kapalı (başka tren)', nopath: 'Yol bulunamadı' };
+    if (tid !== undefined) {
+      const t = this.state.trains.get(tid);
+      key = `t${tid}:${t?.state}`;
+      html = `<b>Tren</b>\n${t ? STATE[t.state] : ''}\n<span class="muted">Tıkla: sefer ve kargo</span>`;
+    } else if (b) {
       const def = BUILDINGS[b.type];
       key = `b${b.id}:${b.status}:${b.recipe}`;
       const lines = [`<b>${def.name}</b>`];

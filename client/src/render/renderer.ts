@@ -16,7 +16,7 @@ import {
   opposite,
 } from '@fabrika/shared';
 import type { BuildingDef, BuildingState, PortDef, ServerMsg } from '@fabrika/shared';
-import { pipeMask } from '../state';
+import { pipeMask, railMask } from '../state';
 import type { GameState } from '../state';
 import { TEX_PX, drawChunk } from './terrain';
 
@@ -168,15 +168,17 @@ export class Renderer {
       if (cur) this.updateBuilding(cur);
     }
     // Bant/boru eklenip kalkınca komşuların şekli değişebilir
-    if (upsert.some((b) => isBelt(b.type) || b.type === 'pipe' || BUILDINGS[b.type].fluidIn || BUILDINGS[b.type].fluidOut || BUILDINGS[b.type].fluidAll || BUILDINGS[b.type].outputs.length) || remove.length) {
-      for (const b of this.state.buildings.values()) if (isBelt(b.type) || BUILDINGS[b.type].fluidAll) this.updateBuilding(b);
+    if (upsert.some((b) => isBelt(b.type) || b.type === 'pipe' || b.type === 'rail' || b.type === 'train_station' || BUILDINGS[b.type].fluidIn || BUILDINGS[b.type].fluidOut || BUILDINGS[b.type].fluidAll || BUILDINGS[b.type].outputs.length) || remove.length) {
+      for (const b of this.state.buildings.values()) if (isBelt(b.type) || BUILDINGS[b.type].fluidAll || b.type === 'rail') this.updateBuilding(b);
     }
     if (upsert.some((b) => b.type === 'power_pole' || BUILDINGS[b.type].power || BUILDINGS[b.type].powerGen) || remove.length) this.drawPowerLines();
   }
 
   private updateBuilding(b: BuildingState) {
     const curve = isBelt(b.type) ? this.state.beltCurve(b) : 0;
-    const extra = b.type === 'pipe' || b.type === 'fluid_tank' ? `:${pipeMask(this.state, b)}:${this.state.fluids.get(b.fnet ?? -1)?.fluid ?? ''}` : '';
+    const extra = b.type === 'pipe' || b.type === 'fluid_tank'
+      ? `:${pipeMask(this.state, b)}:${this.state.fluids.get(b.fnet ?? -1)?.fluid ?? ''}`
+      : b.type === 'rail' ? `:${railMask(this.state, b.x, b.y)}` : b.type === 'train_station' ? `:${b.name}` : '';
     const key = `${b.type}:${b.x}:${b.y}:${b.rot}:${curve}${extra}`;
     let v = this.views.get(b.id);
     if (v && v.key !== key) { v.root.destroy({ children: true }); this.views.delete(b.id); v = undefined; }
@@ -212,6 +214,12 @@ export class Renderer {
       this.beltLayer.addChild(root);
       return view;
     }
+    if (b.type === 'rail') {
+      body.rotation = 0;
+      drawRail(g, railMask(this.state, b.x, b.y));
+      this.ground.addChild(root);
+      return view;
+    }
     if (b.type === 'pipe') {
       body.rotation = 0;
       const fluid = this.state.fluids.get(b.fnet ?? -1)?.fluid;
@@ -223,7 +231,7 @@ export class Renderer {
     root.addChild(view.status);
     view.status.position.set(W / 2 - 0.22, -H / 2 + 0.22);
     if (def.w * def.h >= 2 || b.type === 'hub') {
-      const label = new Text({ text: b.type === 'hub' ? 'HUB' : def.short, style: { fontFamily: 'Rajdhani, Arial', fontSize: b.type === 'hub' ? 48 : 20, fontWeight: '700', fill: 0xffffff, stroke: { color: 0x000000, width: 4 } } });
+      const label = new Text({ text: b.type === 'hub' ? 'HUB' : b.type === 'train_station' ? b.name ?? def.short : def.short, style: { fontFamily: 'Rajdhani, Arial', fontSize: b.type === 'hub' ? 48 : 20, fontWeight: '700', fill: 0xffffff, stroke: { color: 0x000000, width: 4 } } });
       label.anchor.set(0.5);
       label.scale.set(1 / 64);
       label.position.set(0, H / 2 - 0.28);
@@ -376,6 +384,47 @@ export class Renderer {
       if (n.alive && n.hp < 200) {
         v.hp.rect(-0.7, -1.05, 1.4, 0.1).fill(0x330000);
         v.hp.rect(-0.7, -1.05, (1.4 * n.hp) / 200, 0.1).fill(0xc040a0);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ trenler
+
+  private trainG = new Graphics();
+  private trainLayerAdded = false;
+
+  private drawTrains(dt: number) {
+    if (!this.trainLayerAdded) { this.entityLayer.addChild(this.trainG); this.trainLayerAdded = true; }
+    const g = this.trainG;
+    g.clear();
+    const k = Math.min(1, dt * 12);
+    for (const [id, c] of this.state.trainCars) {
+      for (let i = 0; i < c.target.length; i++) {
+        if (i % 3 === 2) {
+          let da = c.target[i] - c.shown[i];
+          da = Math.atan2(Math.sin(da), Math.cos(da));
+          c.shown[i] += da * k;
+        } else c.shown[i] += (c.target[i] - c.shown[i]) * k;
+      }
+      const info = this.state.trains.get(id);
+      const filled = info ? info.cargo.filter(Boolean).length / info.cargo.length : 0;
+      for (let i = c.shown.length - 3; i >= 0; i -= 3) {
+        const x = c.shown[i], y = c.shown[i + 1], a = c.shown[i + 2];
+        const loco = i === 0 || i === c.shown.length - 3;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const pt = (lx: number, ly: number): [number, number] => [x + lx * ca - ly * sa, y + lx * sa + ly * ca];
+        const rect = (lx: number, ly: number, w: number, h: number) => {
+          const p = [pt(lx, ly), pt(lx + w, ly), pt(lx + w, ly + h), pt(lx, ly + h)];
+          g.moveTo(p[0][0], p[0][1]).lineTo(p[1][0], p[1][1]).lineTo(p[2][0], p[2][1]).lineTo(p[3][0], p[3][1]).closePath();
+        };
+        rect(-0.6, -0.36, 1.2, 0.72);
+        g.fill(loco ? 0xc04a3a : 0x6a7480).stroke({ width: 0.05, color: 0x1a1a1a });
+        if (loco) {
+          rect(-0.1, -0.26, 0.45, 0.52); g.fill(0x2a3a4a);
+          rect(0.42, -0.2, 0.14, 0.4); g.fill(0xffe080);
+        } else {
+          rect(-0.5, -0.26, 1.0 * Math.max(0.05, filled), 0.52); g.fill(0xd8a040);
+        }
       }
     }
   }
@@ -586,6 +635,7 @@ export class Renderer {
     this.syncEnemies(dt);
     this.syncNests();
     this.drawFx(dt);
+    this.drawTrains(dt);
     this.drawPings(vx0, vx1, vy0, vy1);
     this.lootG.alpha = 0.85 + Math.sin(this.time * 4) * 0.15;
 
@@ -741,6 +791,37 @@ function drawFluidPorts(g: Graphics, def: BuildingDef) {
   }
 }
 
+function drawRail(g: Graphics, mask: number) {
+  const dirs = [0, 1, 2, 3].filter((d) => mask & (1 << d));
+  const sleeper = 0x6a4a2a, steel = 0xb8c0c8;
+  const straight = (horizontal: boolean) => {
+    for (const o of [-0.36, -0.12, 0.12, 0.36]) {
+      if (horizontal) g.rect(o - 0.05, -0.34, 0.1, 0.68); else g.rect(-0.34, o - 0.05, 0.68, 0.1);
+    }
+    g.fill(sleeper);
+    if (horizontal) { g.rect(-0.5, -0.22, 1, 0.06); g.rect(-0.5, 0.16, 1, 0.06); } else { g.rect(-0.22, -0.5, 0.06, 1); g.rect(0.16, -0.5, 0.06, 1); }
+    g.fill(steel);
+  };
+  const perp = dirs.length === 2 && (dirs[0] + dirs[1]) % 2 === 1;
+  if (perp) {
+    const [a, b] = dirs;
+    const cx = (DX[a] + DX[b]) * 0.5, cy = (DY[a] + DY[b]) * 0.5;
+    const start = Math.atan2(-cy, -cx);
+    const a0 = start - Math.PI / 4, a1 = start + Math.PI / 4;
+    for (let i = 0; i < 4; i++) {
+      const t = a0 + ((i + 0.5) / 4) * (a1 - a0);
+      g.moveTo(cx + Math.cos(t) * 0.16, cy + Math.sin(t) * 0.16).lineTo(cx + Math.cos(t) * 0.84, cy + Math.sin(t) * 0.84);
+    }
+    g.stroke({ width: 0.1, color: sleeper });
+    for (const r of [0.31, 0.69]) g.arc(cx, cy, r, a0, a1).stroke({ width: 0.06, color: steel });
+    return;
+  }
+  const hasH = dirs.some((d) => d % 2 === 0) || dirs.length === 0;
+  const hasV = dirs.some((d) => d % 2 === 1);
+  if (hasH) straight(true);
+  if (hasV) straight(false);
+}
+
 function drawPipe(g: Graphics, mask: number, color: number | null) {
   const c = color ?? 0x6a7a8a;
   const w = 0.32;
@@ -874,6 +955,17 @@ function drawBuildingBody(g: Graphics, def: BuildingDef, view: BuildingView) {
       if (def.id === 'assembler') {
         g.rect(x0 + 0.3, y0 + 0.3, 0.6, h - 0.6).fill(0x3a3a5a);
       }
+      break;
+    }
+    case 'train_station': {
+      // Ray satırı (yerel satır 0) ve peron (satır 1)
+      g.rect(x0 + 0.04, y0 + 0.04, w - 0.08, 0.92).fill(0x3a3530);
+      for (let i = 0; i < 9; i++) g.rect(x0 + 0.12 + i * 0.32, y0 + 0.12, 0.12, 0.76).fill(0x6a4a2a);
+      g.rect(x0, y0 + 0.28, w, 0.07).fill(0xb0b8c0);
+      g.rect(x0, y0 + 0.65, w, 0.07).fill(0xb0b8c0);
+      g.rect(x0 + 0.04, y0 + 1, w - 0.08, 0.96).fill(0x8a8a86);
+      g.rect(x0 + 0.04, y0 + 1, w - 0.08, 0.08).fill(0xe8c040);
+      g.roundRect(-0.6, y0 + 1.25, 1.2, 0.5, 0.08).fill(darken(c, 1.2)).stroke({ width: 0.04, color: 0x1a1a1a });
       break;
     }
     case 'fluid_tank': {

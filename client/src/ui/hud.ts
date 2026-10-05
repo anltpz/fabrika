@@ -241,6 +241,10 @@ export class Hud {
       g.arc((n.x - sx) * k, (n.y - sy) * k, 3, 0, 7);
       g.fill();
     }
+    for (const c of this.state.trainCars.values()) {
+      g.fillStyle = '#ff6a4a';
+      g.fillRect((c.shown[0] - sx) * k - 2, (c.shown[1] - sy) * k - 2, 5, 5);
+    }
     for (const m of this.state.markers) {
       g.font = '12px sans-serif';
       g.textAlign = 'center';

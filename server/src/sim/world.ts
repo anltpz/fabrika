@@ -7,6 +7,7 @@ import {
   DX,
   DY,
   ENEMY_AGGRO_RANGE,
+  trackDirs,
   FOG_CELL,
   FOG_REVEAL_RADIUS,
   LOOT_TABLES,
@@ -93,6 +94,7 @@ import type {
 import { computeNetworks, PowerNetwork } from './power';
 import { ProductionStats } from './stats';
 import { computeFluidNetworks, FluidGraph } from './fluids';
+import { Train, TRAIN_COST, carPositions, newTrain, occupiedTiles, stationsReachable, stepTrain, trainInfo } from './trains';
 
 export interface PlayerData {
   id: number;
@@ -146,6 +148,7 @@ export interface SaveData {
   explored?: number[];
   lootOpened?: number[];
   blasted?: number[];
+  trains?: Array<Omit<Train, 'path'>>;
 }
 
 const MACHINE_OUT_CAP = 50;
@@ -191,6 +194,8 @@ export class World {
   private grassPending: number[] = [];
   private lootDirty = false;
   private fluidDirty = true;
+  trains = new Map<number, Train>();
+  private trainsDirty = false;
   private fluid: FluidGraph = { nets: new Map(), portNet: new Map(), memberNet: new Map() };
   private lastPing = new Map<number, number>();
 
@@ -263,6 +268,7 @@ export class World {
     for (const i of data.explored ?? []) if (i >= 0 && i < w.explored.length) w.explored[i] = 1;
     for (const id of data.lootOpened ?? []) w.lootOpened.add(id);
     for (const k of data.blasted ?? []) w.blastTile(k % 4096, Math.floor(k / 4096));
+    for (const t of data.trains ?? []) w.trains.set(t.id, { ...t, path: null, retryT: 0 });
     w.fogPending = [];
     w.grassPending = [];
     w.changed.clear();
@@ -286,6 +292,7 @@ export class World {
       explored: this.exploredList(),
       lootOpened: [...this.lootOpened],
       blasted: [...this.blasted],
+      trains: [...this.trains.values()].map(({ path: _p, ...rest }) => rest),
     };
   }
 
@@ -347,7 +354,11 @@ export class World {
   private newBuildingState(type: string, x: number, y: number, rot: number): BuildingState {
     const def = BUILDINGS[type];
     const b: BuildingState = { id: this.nextId++, type, x, y, rot: rot & 3, inBuf: {}, outBuf: {}, progress: 0, status: 'idle' };
-    if (type === 'storage') b.storage = makeInventory(STORAGE_SLOTS);
+    if (type === 'storage' || type === 'train_station') b.storage = makeInventory(STORAGE_SLOTS);
+    if (type === 'train_station') {
+      b.mode = 'load';
+      b.name = `İstasyon ${[...this.buildings.values()].filter((x) => x.type === 'train_station').length + 1}`;
+    }
     if (isBelt(type) || QUEUE_TYPES.has(type)) b.items = [];
     if (def.powerGen) b.fuel = 0;
     if (type === 'splitter' || type === 'smart_splitter') b.rr = 0;
@@ -541,6 +552,7 @@ export class World {
     if (!p) return false;
     const def = BUILDINGS[type];
     if (!def) return false;
+    if (type === 'locomotive') return this.placeTrain(p, x, y);
     const err = this.canPlace(type, x, y, rot, p);
     if (err) { this.toast(id, err); return false; }
     if (!hasItems(p.inventory, def.cost) && !this.cheats) { this.toast(id, 'Yeterli malzeme yok'); return false; }
@@ -553,7 +565,16 @@ export class World {
 
   buildBelts(id: number, type: string, path: Array<{ x: number; y: number; dir: number }>) {
     const p = this.players.get(id);
-    if (!p || !isBelt(type) || !Array.isArray(path)) return;
+    if (!p || !Array.isArray(path)) return;
+    if (type === 'rail' || type === 'pipe') {
+      for (const step of path.slice(0, 200)) {
+        const x = step.x | 0, y = step.y | 0;
+        if (this.buildingAt(x, y)?.type === type) continue;
+        if (!this.build(id, type, x, y, 0)) break;
+      }
+      return;
+    }
+    if (!isBelt(type)) return;
     const def = BUILDINGS[type];
     let placed = 0;
     for (const step of path.slice(0, 200)) {
@@ -591,6 +612,10 @@ export class World {
     const b = this.buildings.get(bid);
     if (!p || !b) return;
     if (b.type === 'hub') { this.toast(id, 'HUB sökülemez'); return; }
+    if (b.type === 'rail' || b.type === 'train_station') {
+      const tiles = new Set(footprint(b.type, b.x, b.y, b.rot).map(([x, y]) => y * 4096 + x));
+      for (const t of this.trains.values()) for (const k of occupiedTiles(t)) if (tiles.has(k)) { this.toast(id, 'Rayda tren var'); return; }
+    }
     if (this.distToBuilding(p, b) > BUILD_RANGE) { this.toast(id, 'Çok uzak'); return; }
     const items: Array<[string, number]> = [];
     for (const [k, v] of Object.entries(BUILDINGS[b.type].cost)) items.push([k, v]);
@@ -657,7 +682,7 @@ export class World {
     const def = BUILDINGS[b.type];
     let amount = Math.min(s.count, count ?? s.count);
     let accepted = 0;
-    if (b.storage && b.type === 'storage') {
+    if (b.storage && (b.type === 'storage' || b.type === 'train_station')) {
       accepted = amount - addItem(b.storage, s.item, amount);
     } else if (def.fuels) {
       if (!def.fuels.includes(s.item)) { this.toast(id, 'Bu yakıt kabul edilmiyor'); return; }
@@ -1050,6 +1075,7 @@ export class World {
     this.updateMachines();
     this.updateFluidFlow();
     this.updateLogistics();
+    this.updateTrains();
     this.updateEnemies();
     this.updateEfficiency();
     if (this.tickCount % 20 === 0) this.stats.rotate();
@@ -1263,6 +1289,80 @@ export class World {
     }
   }
 
+  // ---------------------------------------------------------------- trenler
+
+  private placeTrain(p: PlayerData, x: number, y: number): boolean {
+    const def = BUILDINGS.locomotive;
+    if (!isUnlocked(def.unlock, this.tech.completed)) { this.toast(p.id, 'Bu yapı henüz açılmadı'); return false; }
+    if (this.buildingAt(x, y)?.type !== 'rail') { this.toast(p.id, 'Lokomotif bir raya yerleştirilmeli'); return false; }
+    if (Math.hypot(p.x - x - 0.5, p.y - y - 0.5) > BUILD_RANGE) { this.toast(p.id, 'Çok uzak'); return false; }
+    for (const t of this.trains.values()) if (occupiedTiles(t).has(y * 4096 + x)) { this.toast(p.id, 'Burada zaten bir tren var'); return false; }
+    if (!this.cheats && !hasItems(p.inventory, TRAIN_COST)) { this.toast(p.id, 'Yeterli malzeme yok'); return false; }
+    if (!this.cheats) removeItems(p.inventory, TRAIN_COST);
+    p.dirtyInv = true;
+    const t = newTrain(this.nextId++, x, y);
+    t.schedule = stationsReachable(x, y, this);
+    t.state = t.schedule.length ? 'moving' : 'idle';
+    this.trains.set(t.id, t);
+    this.trainsDirty = true;
+    this.toast(p.id, t.schedule.length ? `Tren ${t.schedule.length} istasyona sefer yapacak` : 'Tren kuruldu; rayına bağlı istasyon yok', 'good');
+    return true;
+  }
+
+  trainSchedule(id: number, trainId: number, stops: number[]) {
+    const t = this.trains.get(trainId);
+    if (!t || !this.players.has(id) || !Array.isArray(stops)) return;
+    t.schedule = stops.slice(0, 20).filter((s) => this.buildings.get(s)?.type === 'train_station');
+    t.stop = 0;
+    t.path = null;
+    t.retryT = 0;
+    if (t.state !== 'loading') t.state = 'moving';
+    this.trainsDirty = true;
+  }
+
+  trainRemove(id: number, trainId: number) {
+    const p = this.players.get(id);
+    const t = this.trains.get(trainId);
+    if (!p || !t) return;
+    if (Math.hypot(p.x - t.x, p.y - t.y) > BUILD_RANGE) { this.toast(id, 'Çok uzak'); return; }
+    this.trains.delete(trainId);
+    const items: Array<[string, number]> = Object.entries(TRAIN_COST);
+    for (const s of t.cargo) if (s) items.push([s.item, s.count]);
+    this.giveOrDrop(p, items);
+    this.trainsDirty = true;
+  }
+
+  stationMode(id: number, bid: number, mode: 'load' | 'unload') {
+    const b = this.buildings.get(bid);
+    if (!this.players.has(id) || b?.type !== 'train_station' || (mode !== 'load' && mode !== 'unload')) return;
+    b.mode = mode;
+    this.markChanged(b.id);
+  }
+
+  stationName(id: number, bid: number, name: string) {
+    const b = this.buildings.get(bid);
+    if (!this.players.has(id) || b?.type !== 'train_station') return;
+    b.name = String(name ?? '').trim().slice(0, 20) || b.name;
+    this.markChanged(b.id);
+  }
+
+  private updateTrains() {
+    const list = [...this.trains.values()];
+    for (const t of list) {
+      const st = t.schedule[t.stop];
+      const before = t.cargo.map((s) => (s ? s.count : 0)).join();
+      if (stepTrain(t, this, list)) this.trainsDirty = true;
+      if (t.state === 'loading' && st !== undefined) {
+        const after = t.cargo.map((s) => (s ? s.count : 0)).join();
+        if (after !== before) this.markChanged(st);
+      }
+    }
+  }
+
+  trainsInfo() {
+    return [...this.trains.values()].map(trainInfo);
+  }
+
   // ---------------------------------------------------------------- sıvılar
 
   private portNetwork(b: BuildingState, kind: 'in' | 'out', i: number) {
@@ -1395,6 +1495,7 @@ export class World {
       return true;
     }
     if (t.type === 'storage') return addItem(t.storage!, item, 1) === 0;
+    if (t.type === 'train_station') return t.mode === 'load' && addItem(t.storage!, item, 1) === 0;
     if (t.type === 'underground_in') {
       if (t.items!.length >= UNDERGROUND_IN_CAP) return false;
       t.items!.push({ item, pos: 0 });
@@ -1473,7 +1574,8 @@ export class World {
       } else if (b.type === 'merger') {
         const it = b.items![0];
         if (it && this.tryInsert(ports[0].x, ports[0].y, ports[0].dir, it.item)) b.items!.shift();
-      } else if (b.type === 'storage') {
+      } else if (b.type === 'storage' || b.type === 'train_station') {
+        if (b.type === 'train_station' && b.mode !== 'unload') continue;
         const p = ports[0];
         const idx = b.storage!.findIndex((s) => s && s.count > 0);
         if (idx < 0) continue;
@@ -1589,13 +1691,16 @@ export class World {
       for (const id of this.prevBelts) if (!(id in belts) && this.buildings.has(id)) belts[id] = [];
       this.prevBelts = new Set(Object.keys(belts).map(Number).filter((id) => belts[id].length > 0));
       tick.belts = belts;
+      if (this.trains.size) {
+        tick.trains = [...this.trains.values()].map((t) => [t.id, ...carPositions(t).flat().map(round2)]);
+      }
     }
     this.out.push(tick);
 
     if (t % 4 === 0) {
       for (const b of this.buildings.values()) {
         if (isBelt(b.type)) continue;
-        const key = JSON.stringify([b.status, b.inBuf, b.outBuf, Math.round(b.progress * 50), b.recipe, b.storage, b.tripped, b.items?.length, Math.round(b.fuel ?? 0), b.filters, Math.round((b.eff ?? 0) * 20)]);
+        const key = JSON.stringify([b.status, b.inBuf, b.outBuf, Math.round(b.progress * 50), b.recipe, b.storage, b.tripped, b.items?.length, Math.round(b.fuel ?? 0), b.filters, Math.round((b.eff ?? 0) * 20), b.mode, b.name]);
         if (this.lastSent.get(b.id) !== key) { this.lastSent.set(b.id, key); this.changed.add(b.id); }
       }
     }
@@ -1609,6 +1714,7 @@ export class World {
       this.out.push({ t: 'trees', removed: this.treesRemovedPending });
       this.treesRemovedPending = [];
     }
+    if (this.trainsDirty && t % 5 === 0) { this.trainsDirty = false; this.out.push({ t: 'trains', list: this.trainsInfo() }); }
     if (this.fogPending.length) { this.out.push({ t: 'fog', cells: this.fogPending }); this.fogPending = []; }
     if (this.grassPending.length) { this.out.push({ t: 'terrain', grass: this.grassPending }); this.grassPending = []; }
     if (this.lootDirty) { this.lootDirty = false; this.out.push({ t: 'loot', opened: [...this.lootOpened] }); }

@@ -31,7 +31,7 @@ import type { GameState } from '../state';
 import { drawMinimapBase } from '../render/terrain';
 import { chip, costChips, flowChips, fmt, h, hex, icon } from './dom';
 
-type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats' | 'blueprints' | 'map';
+type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats' | 'blueprints' | 'map' | 'train';
 
 const STATUS_DOT: Record<string, string> = {
   working: '#5ad65a', idle: '#9aa0a6', nopower: '#e04848', tripped: '#ff3030', full: '#e8c040', nofuel: '#e07a30', norecipe: '#6a9ae8', noinput: '#e8c040', unpaired: '#e04848',
@@ -56,6 +56,7 @@ export class Panels {
     state.on('stats', () => { if (this.kind === 'stats') rerender(); });
     state.on('blueprints', () => { if (this.kind === 'blueprints') rerender(); });
     state.on('markers', () => { if (this.kind === 'map') rerender(); });
+    state.on('trains', () => { if (this.kind === 'train') rerender(); });
     state.on('trees', () => { this.mapBase = null; });
     state.on('fog', () => { if (this.kind === 'map') this.drawBigMap(); });
     state.on('buildings', (up: BuildingState[], rem: number[]) => {
@@ -118,6 +119,7 @@ export class Panels {
     else if (this.kind === 'stats') el = this.renderStats();
     else if (this.kind === 'blueprints') el = this.renderBlueprints();
     else if (this.kind === 'map') el = this.renderMap();
+    else if (this.kind === 'train') el = this.renderTrain();
     if (!el) { this.close(); return; }
     this.wrap?.remove();
     this.wrap = el;
@@ -129,7 +131,7 @@ export class Panels {
   // ------------------------------------------------------------ inşa menüsü
 
   private renderBuild(): HTMLElement {
-    const cats: BuildingCategory[] = ['uretim', 'lojistik', 'sivi', 'enerji', 'ozel'];
+    const cats: BuildingCategory[] = ['uretim', 'lojistik', 'sivi', 'tren', 'enerji', 'ozel'];
     const tabs = h('div', { class: 'tabs' }, ...cats.map((c) => h('button', { class: this.buildTab === c ? 'on' : '', onclick: () => { this.buildTab = c; this.render(); } }, CATEGORY_NAMES[c])));
     const grid = h('div', { class: 'build-grid' });
     for (const def of BUILDING_LIST) {
@@ -524,6 +526,7 @@ export class Panels {
     if (def.crafter) body.append(this.crafterSection(b), def.fluidIn || def.fluidOut ? this.machineFluidSection(b) : h('div'));
     else if (def.mineRate) body.append(this.minerSection(b, def.mineRate));
     else if (def.powerGen) body.append(this.generatorSection(b));
+    else if (b.type === 'train_station') body.append(this.stationSection(b), this.storageSection(b));
     else if (b.type === 'storage' || b.type === 'crate') body.append(this.storageSection(b));
     else if (b.type === 'smart_splitter') body.append(this.filterSection(b));
     else if (def.waterRate || def.pumpRate) body.append(this.extractorSection(b));
@@ -661,6 +664,60 @@ export class Panels {
     return wrap;
   }
 
+  private stationSection(b: BuildingState): HTMLElement {
+    const name = h('input', { value: b.name ?? '', maxlength: '20', style: { width: '200px' } }) as HTMLInputElement;
+    name.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { this.send({ t: 'stationName', id: b.id, name: name.value }); name.blur(); } });
+    name.addEventListener('blur', () => { if (name.value !== b.name) this.send({ t: 'stationName', id: b.id, name: name.value }); });
+    const mode = (m: 'load' | 'unload', label: string) => h('button', { class: b.mode === m ? '' : 'ghost', onclick: () => this.send({ t: 'stationMode', id: b.id, mode: m }) }, label);
+    return h('div', {},
+      h('div', { class: 'filter-row' }, h('span', { class: 'fname' }, 'İsim'), name),
+      h('div', { class: 'filter-row' }, h('span', { class: 'fname' }, 'Mod'), mode('load', '⬆ Yükle'), mode('unload', '⬇ Boşalt')),
+      h('p', { class: 'muted', style: { fontSize: '12px' } }, b.mode === 'unload'
+        ? 'Gelen tren kargosunu buraya boşaltır; depo arka çıkıştan banda verilir.'
+        : 'Arka girişten bantla gelen eşyalar depolanır, gelen trene yüklenir.'),
+    );
+  }
+
+  private renderTrain(): HTMLElement | null {
+    const t = this.machineId !== null ? this.state.trains.get(this.machineId) : undefined;
+    if (!t) return null;
+    const STATE: Record<string, string> = { moving: 'Yolda', loading: 'İstasyonda yükleme/boşaltma', idle: 'Sefer listesi boş', blocked: 'Yol başka bir trenle kapalı', nopath: 'Raylarla bağlı yol bulunamadı' };
+    const stations = [...this.state.buildings.values()].filter((b) => b.type === 'train_station');
+    const nameOf = (id: number) => { const s = this.state.buildings.get(id); return s ? `${s.name} (${s.mode === 'unload' ? 'Boşalt' : 'Yükle'})` : '?'; };
+    const body = h('div');
+    body.append(h('div', { class: 'machine-head' },
+      h('span', { class: 'status-pill' }, h('span', { class: 'dot', style: { background: t.state === 'moving' || t.state === 'loading' ? '#5ad65a' : '#e8c040' } }), STATE[t.state]),
+      h('button', { class: 'ghost small', onclick: () => { this.send({ t: 'trainRemove', id: t.id }); this.close(); } }, 'Treni Sök'),
+    ));
+    body.append(h('div', { class: 'section-title' }, 'Sefer Listesi'));
+    const list = h('div', { class: 'recipe-list' });
+    const setStops = (stops: number[]) => this.send({ t: 'trainSchedule', id: t.id, stops });
+    t.schedule.forEach((sid, i) => {
+      list.append(h('div', { class: 'recipe' + (i === t.stop ? ' sel' : '') },
+        h('div', { class: 'rname' }, `${i + 1}. ${nameOf(sid)}`),
+        h('div', { class: 'flow' }, i === t.stop ? h('span', { class: 'badge cur' }, 'Sıradaki') : null),
+        h('div', { class: 'btns' },
+          h('button', { class: 'ghost small', disabled: i === 0 ? 'true' : undefined, onclick: () => { const s = [...t.schedule]; [s[i - 1], s[i]] = [s[i], s[i - 1]]; setStops(s); } }, '↑'),
+          h('button', { class: 'ghost small', onclick: () => setStops(t.schedule.filter((_, j) => j !== i)) }, '✕'),
+        ),
+      ));
+    });
+    if (!t.schedule.length) list.append(h('p', { class: 'muted' }, 'Sefer yok. Aşağıdan istasyon ekle.'));
+    body.append(list);
+    const sel = h('select', {}) as HTMLSelectElement;
+    for (const s of stations) sel.append(h('option', { value: String(s.id) }, nameOf(s.id)));
+    body.append(h('div', { class: 'filter-row', style: { marginTop: '10px' } }, sel, h('button', { class: 'small', disabled: stations.length ? undefined : 'true', onclick: () => setStops([...t.schedule, Number(sel.value)]) }, '+ Durak Ekle')));
+    body.append(h('div', { class: 'section-title' }, 'Kargo', h('span', { class: 'muted', style: { fontFamily: 'Inter', fontWeight: '400', fontSize: '12px' } }, `${t.cargo.filter(Boolean).length}/${t.cargo.length} yuva`)));
+    const grid = h('div', { class: 'inv-grid' });
+    for (const s of t.cargo) {
+      const slot = h('div', { class: 'inv-slot' + (s ? '' : ' empty') });
+      if (s) slot.append(icon(s.item), h('span', { class: 'cnt' }, String(s.count)));
+      grid.append(slot);
+    }
+    body.append(grid);
+    return this.shell('Tren', body);
+  }
+
   private minerSection(b: BuildingState, rate: number): HTMLElement {
     let node;
     for (const [x, y] of footprint(b.type, b.x, b.y, b.rot)) {
@@ -703,7 +760,7 @@ export class Panels {
       grid.append(slot);
     });
     wrap.append(h('div', { class: 'section-title' }, b.type === 'crate' ? 'Sandık' : 'Depo', h('button', { class: 'small', onclick: () => this.send({ t: 'take', id: b.id, from: 'storage' }) }, 'Hepsini Al')), grid);
-    if (b.type === 'storage') {
+    if (b.type === 'storage' || b.type === 'train_station') {
       wrap.append(h('div', { class: 'section-title' }, 'Envanterin', h('span', { class: 'muted', style: { fontFamily: 'Inter', fontWeight: '400', fontSize: '12px' } }, 'tıkla: depoya koy')));
       wrap.append(this.invGrid((i) => this.send({ t: 'put', id: b.id, slot: i })));
     }

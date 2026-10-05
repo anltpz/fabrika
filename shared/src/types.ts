@@ -39,6 +39,9 @@ export interface BuildingState {
   items?: BeltItem[];
   /** Ayırıcı / depo için sıradaki çıkış */
   rr?: number;
+  /** Tren istasyonu: yükle/boşalt ve isim */
+  mode?: 'load' | 'unload';
+  name?: string;
   /** Boru/depo: bağlı olduğu sıvı hattı ve içerik (kayıt için) */
   fnet?: number;
   fluidType?: string;
@@ -116,4 +119,12 @@ export interface FluidNetInfo {
   fluid: string | null;
   amount: number;
   capacity: number;
+}
+
+export interface TrainInfo {
+  id: number;
+  schedule: number[];
+  stop: number;
+  state: 'moving' | 'loading' | 'idle' | 'blocked' | 'nopath';
+  cargo: Array<Slot | null>;
 }

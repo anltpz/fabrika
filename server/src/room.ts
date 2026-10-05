@@ -46,6 +46,7 @@ export class Room {
       explored: this.world.exploredList(),
       lootOpened: [...this.world.lootOpened],
       blasted: [...this.world.blasted],
+      trains: this.world.trainsInfo(),
     };
     this.sendTo(p.id, { t: 'welcome', snap });
     this.broadcast({ t: 'players', players: this.world.playersPublic() });
@@ -90,6 +91,10 @@ export class Room {
       case 'mapPing': w.mapPing(id, msg.x, msg.y); break;
       case 'markerAdd': w.markerAdd(id, msg.x, msg.y, msg.label, msg.icon); break;
       case 'markerRemove': w.markerRemove(id, msg.id); break;
+      case 'trainSchedule': w.trainSchedule(id, msg.id, msg.stops); break;
+      case 'trainRemove': w.trainRemove(id, msg.id); break;
+      case 'stationMode': w.stationMode(id, msg.id, msg.mode); break;
+      case 'stationName': w.stationName(id, msg.id, msg.name); break;
       case 'setFilter': w.setFilter(id, msg.id, msg.index, msg.filter); break;
       case 'ping': this.sendTo(id, { t: 'pong', time: msg.time }); break;
     }

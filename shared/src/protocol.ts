@@ -1,5 +1,5 @@
 import type { Blueprint } from './blueprints';
-import type { BuildingState, CraftJob, EnemyState, FluidNetInfo, MapMarker, NestState, PlayerPublic, PowerNetInfo, Slot, TechState } from './types';
+import type { BuildingState, CraftJob, EnemyState, FluidNetInfo, MapMarker, TrainInfo, NestState, PlayerPublic, PowerNetInfo, Slot, TechState } from './types';
 
 export interface InputState {
   up: boolean;
@@ -21,6 +21,10 @@ export type ClientMsg =
   | { t: 'bpPlace'; id: number; x: number; y: number; rot: number }
   | { t: 'bpDelete'; id: number }
   | { t: 'mapPing'; x: number; y: number }
+  | { t: 'trainSchedule'; id: number; stops: number[] }
+  | { t: 'trainRemove'; id: number }
+  | { t: 'stationMode'; id: number; mode: 'load' | 'unload' }
+  | { t: 'stationName'; id: number; name: string }
   | { t: 'markerAdd'; x: number; y: number; label: string; icon: string }
   | { t: 'markerRemove'; id: number }
   | { t: 'take'; id: number; from: 'in' | 'out' | 'storage'; item?: string; slot?: number }
@@ -51,19 +55,22 @@ export interface Snapshot {
   explored: number[];
   lootOpened: number[];
   blasted: number[];
+  trains: TrainInfo[];
 }
 
 /** Tick içindeki oyuncu: [id, x, y, açı, hp] */
 export type PlayerTick = [number, number, number, number, number];
 /** Tick içindeki düşman: [id, x, y, hp] */
 export type EnemyTick = [number, number, number, number];
+/** Tren: [id, x, y, açı, vagon1x, vagon1y, vagon1açı, ...] */
+export type TrainTick = number[];
 /** Bant içerikleri: id -> düz dizi [itemIndex, pos*1000, ...] */
 export type BeltTick = Record<number, number[]>;
 
 export type ServerMsg =
   | { t: 'welcome'; snap: Snapshot }
   | { t: 'error'; msg: string }
-  | { t: 'tick'; tick: number; players?: PlayerTick[]; enemies?: EnemyTick[]; belts?: BeltTick; ack?: number }
+  | { t: 'tick'; tick: number; players?: PlayerTick[]; enemies?: EnemyTick[]; belts?: BeltTick; trains?: TrainTick[]; ack?: number }
   | { t: 'buildings'; upsert: BuildingState[]; remove: number[] }
   | { t: 'players'; players: PlayerPublic[] }
   | { t: 'inv'; inventory: Array<Slot | null> }
@@ -77,6 +84,7 @@ export type ServerMsg =
   | { t: 'markers'; list: MapMarker[] }
   | { t: 'fog'; cells: number[] }
   | { t: 'fluids'; nets: FluidNetInfo[] }
+  | { t: 'trains'; list: TrainInfo[] }
   | { t: 'terrain'; grass: number[] }
   | { t: 'loot'; opened: number[] }
   | { t: 'mapPing'; x: number; y: number; by: number; name: string; color: number }

@@ -16,6 +16,7 @@ import {
   isBelt,
   isUnlocked,
   makeInventory,
+  railNeighbors,
   terrainBuildable,
   tileKey,
   worldPorts,
@@ -24,6 +25,7 @@ import type {
   BeltItem,
   Blueprint,
   FluidNetInfo,
+  TrainInfo,
   MapMarker,
   BuildingState,
   CraftJob,
@@ -91,6 +93,9 @@ export class GameState extends Emitter {
   markers: MapMarker[] = [];
   explored = new Uint8Array(0);
   fluids = new Map<number, FluidNetInfo>();
+  trains = new Map<number, TrainInfo>();
+  /** Tren araç konumları: hedef (sunucu) ve görüntü */
+  trainCars = new Map<number, { target: number[]; shown: number[] }>();
   lootOpened = new Set<number>();
   pings: Array<{ x: number; y: number; color: number; name: string; t0: number }> = [];
   stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
@@ -119,6 +124,7 @@ export class GameState extends Emitter {
     this.explored = new Uint8Array(cols * cols);
     for (const i of snap.explored ?? []) this.explored[i] = 1;
     this.lootOpened = new Set(snap.lootOpened ?? []);
+    this.trains = new Map((snap.trains ?? []).map((t) => [t.id, t]));
     for (const k of snap.blasted ?? []) this.setGrass(k);
     this.emit('loaded');
   }
@@ -184,6 +190,16 @@ export class GameState extends Emitter {
           }
           for (const id of [...this.enemies.keys()]) if (!seen.has(id)) this.enemies.delete(id);
         }
+        if (msg.trains) {
+          const seen = new Set<number>();
+          for (const arr of msg.trains) {
+            const [id, ...rest] = arr;
+            seen.add(id);
+            const c = this.trainCars.get(id);
+            if (c) c.target = rest; else this.trainCars.set(id, { target: rest, shown: [...rest] });
+          }
+          for (const id of [...this.trainCars.keys()]) if (!seen.has(id)) this.trainCars.delete(id);
+        }
         if (msg.belts) {
           const now = performance.now();
           for (const [ids, arr] of Object.entries(msg.belts)) {
@@ -236,6 +252,11 @@ export class GameState extends Emitter {
       case 'power':
         this.power = msg.nets;
         this.emit('power');
+        break;
+      case 'trains':
+        this.trains = new Map(msg.list.map((t) => [t.id, t]));
+        for (const id of [...this.trainCars.keys()]) if (!this.trains.has(id)) this.trainCars.delete(id);
+        this.emit('trains');
         break;
       case 'fluids':
         this.fluids = new Map(msg.nets.map((n) => [n.id, n]));
@@ -387,4 +408,19 @@ export function pipeMask(state: GameState, b: BuildingState): number {
     }
   }
   return mask;
+}
+
+/** Ray bağlantı maskesi */
+export function railMask(state: GameState, x: number, y: number): number {
+  let m = 0;
+  for (const [, , d] of railNeighbors(x, y, (ax, ay) => state.buildingAt(ax, ay))) m |= 1 << d;
+  return m;
+}
+
+/** Fare konumuna en yakın tren (araç merkezine 0.8 tile içinde) */
+export function trainAt(state: GameState, x: number, y: number): number | undefined {
+  for (const [id, c] of state.trainCars) {
+    for (let i = 0; i < c.shown.length; i += 3) if (Math.hypot(c.shown[i] - x, c.shown[i + 1] - y) < 0.8) return id;
+  }
+  return undefined;
 }

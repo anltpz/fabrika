@@ -55,6 +55,10 @@ npm run dev:client   # Vite, http://localhost:5173 (WebSocket'i 3000'e yönlendi
 | `F` | Söküm modu (malzemeler iade edilir) |
 | `Tab` / `I` | Envanter ve elle üretim |
 | `H` | HUB kademeleri |
+| `P` | Üretim istatistikleri ve darboğazlar |
+| `B` | Plan (blueprint) kütüphanesi |
+| `M` | Büyük harita ve işaretler |
+| `G` | Farenin olduğu yere ping at |
 | `Boşluk` | Saldır |
 | `Enter` | Sohbet (`/yardim`) |
 | Fare tekerleği | Yakınlaştır / uzaklaştır |
@@ -66,17 +70,30 @@ npm run dev:client   # Vite, http://localhost:5173 (WebSocket'i 3000'e yönlendi
 3. HUB'a (`H`) teslimat yaparak kademe aç. Kademeler takımın ortak ilerlemesidir.
 4. Maden çıkarıcıyı bir düğümün üzerine kur, bantları sürükleyerek çiz, fırın ve kurucularda tarif seç.
 5. Biyokütle veya kömür jeneratörü ve elektrik direkleriyle güç ağı kur. Tüketim üretimi aşarsa sigorta atar; bir direkten veya jeneratörden sıfırlanır.
-6. Böcek yuvalarından uzak dur ya da yuvaları yok et. Ölürsen eşyaların öldüğün yerde bir sandıkta kalır.
-7. Altı kademeyi tamamlayıp **Fabrika Ustası** ol!
+6. Haritayı keşfet: sis yürüdükçe açılır, düşmüş kargolardan değerli parçalar çıkar, kükürt/kuvars/boksit/petrol düğümleri uzaklardadır. Patlayıcıyla kayalık alanları açabilirsin.
+7. Petrol Çağı'nda borularla su ve petrol taşı, rafineride plastik/kauçuk/yakıt üret.
+8. Lojistik Ağı'nda raylar döşe, istasyonları Yükle/Boşalt moduna al ve trenlerle uzak bölgeleri bağla.
+9. Böcek yuvalarından uzak dur ya da yuvaları yok et. Ölürsen eşyaların öldüğün yerde bir sandıkta kalır.
+10. Dokuz kademeyi tamamlayıp **Fabrika Ustası** ol!
 
-**Bina portları:** Önizlemede yeşil ok giriş, turuncu ok çıkıştır. Bant, girişe doğru bakmalıdır.
+**Bina portları:** Önizlemede yeşil ok giriş, turuncu ok çıkıştır. Bant, girişe doğru bakmalıdır. Mavi daireler sıvı portlarıdır (boru bağlanır).
+
+**Takım araçları:**
+- **Planlar (B):** Bir alanı seçip kaydet; takımın herkesi planı döndürerek tek tıkla kurabilir. Tarifler ve filtreler de kopyalanır.
+- **İstatistik (P):** Eşya başına dakikalık üretim/tüketim, makine verimi ve "girdi yetersiz / çıkış dolu / enerji yok" uyarıları.
+- **Harita (M) ve ping (G):** Haritaya ikonlu işaret koy, takım arkadaşlarına bir yeri göster.
+
+**Lojistik ipuçları:**
+- **Alt Geçit:** Giriş ve aynı yöne bakan çıkış arasında 5 tile'a kadar eşyalar engellerin altından geçer.
+- **Akıllı Ayırıcı:** Her çıkışa belirli eşya, herhangi, tanımsız diğerleri, taşma veya kapalı filtresi verilir.
+- **Bant, ray ve boru** sürükleyerek çizilir.
 
 ## İçerik
 
-- **Kaynaklar:** demir/bakır cevheri, kireçtaşı, kömür (saf olmayan / normal / saf düğümler), ağaçlar
-- **Parçalar:** külçeler, çelik, plaka, çubuk, vida, tel, kablo, beton, güçlendirilmiş plaka, rotor, modüler çerçeve, çelik kiriş/boru, stator, motor
-- **Binalar:** HUB, Çalışma Tezgahı, Maden Çıkarıcı Mk1/Mk2, Eritme Fırını, Dökümhane, Kurucu, Montajcı, Biyokütle ve Kömür Jeneratörü, Elektrik Direği, Bant Mk1/Mk2, Ayırıcı, Birleştirici, Depo
-- **Kademeler:** HUB Kurulumu → Temel Otomasyon → Montaj Hattı → Çelik Çağı → Endüstri → Fabrika Ustası
+- **Kaynaklar:** demir/bakır cevheri, kireçtaşı, kömür, kükürt, kuvars, boksit, ham petrol, su (saf olmayan / normal / saf düğümler), ağaçlar
+- **Parçalar:** külçeler, çelik, alüminyum, plaka, çubuk, vida, tel, kablo, beton, güçlendirilmiş plaka, rotor, modüler çerçeve, çelik kiriş/boru, stator, motor, siyah barut, patlayıcı, kuvars kristali, silika, plastik, kauçuk, devre kartı, bilgisayar
+- **Binalar:** HUB, Çalışma Tezgahı, Maden Çıkarıcı Mk1/Mk2, Eritme Fırını, Dökümhane, Kurucu, Montajcı, Rafineri, Biyokütle/Kömür/Yakıt Jeneratörü, Elektrik Direği, Bant Mk1/Mk2, Alt Geçit, Ayırıcı, Akıllı Ayırıcı, Birleştirici, Depo, Su Çıkarıcı, Petrol Kuyusu, Boru, Sıvı Deposu, Tren Rayı, Tren İstasyonu, Lokomotif
+- **Kademeler:** HUB Kurulumu → Temel Otomasyon → Montaj Hattı → Çelik Çağı → Endüstri → Petrol Çağı → Lojistik Ağı → Yüksek Teknoloji → Fabrika Ustası
 
 Tüm veriler `shared/src/` altında (`items.ts`, `recipes.ts`, `buildings.ts`, `milestones.ts`). Yeni içerik eklemek için bu dosyalar düzenlenir.
 

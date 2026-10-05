@@ -9,7 +9,7 @@ const SEED = 12345;
 function setup() {
   const w = new World(SEED);
   w.cheats = true;
-  w.tech.completed = 6;
+  w.tech.completed = 9;
   const p = w.join('Test', undefined);
   if (typeof p === 'string') throw new Error(p);
   return { w, p };
@@ -339,7 +339,6 @@ describe('sıvılar', () => {
     expect(w.canPlace('water_extractor', x, y, 0)).toContain('suyun üzerine');
     for (const [tx, ty] of [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]]) w.map.terrain[ty * w.map.size + tx] = Terrain.Water;
     expect(w.build(p.id, 'water_extractor', x, y, 0)).toBe(true);
-    w.buildBelts; // boru çizimi
     for (const i of [2, 3]) expect(w.build(p.id, 'pipe', x + i, y, 0)).toBe(true);
     expect(w.build(p.id, 'fluid_tank', x + 4, y, 0)).toBe(true);
     // Enerji
@@ -390,6 +389,34 @@ describe('sıvılar', () => {
     expect(gen.status).toBe('working');
     const net = w.netInfo.find((n) => n.capacity >= 150);
     expect(net).toBeTruthy();
+  });
+});
+
+describe('trenler', () => {
+  it('tren yükleme istasyonundan boşaltma istasyonuna eşya taşır', () => {
+    const { w, p } = setup();
+    const x = Math.floor(p.x) + 6, y = Math.floor(p.y) - 6;
+    clearArea(w, x - 1, y - 1, x + 17, y + 3);
+    p.x = x + 8; p.y = y + 3.5;
+    expect(w.build(p.id, 'train_station', x, y, 0)).toBe(true);
+    w.buildBelts(p.id, 'rail', Array.from({ length: 10 }, (_, i) => ({ x: x + 3 + i, y, dir: 0 })));
+    expect(w.build(p.id, 'train_station', x + 13, y, 0)).toBe(true);
+    const a = w.buildingAt(x, y)!, b = w.buildingAt(x + 13, y)!;
+    w.stationMode(p.id, b.id, 'unload');
+    a.storage![0] = { item: 'iron_plate', count: 30 };
+    expect(w.build(p.id, 'locomotive', x + 7, y, 0)).toBe(true);
+    const train = [...w.trains.values()][0];
+    expect(train.schedule).toEqual([a.id, b.id]);
+    run(w, 30);
+    const got = b.storage!.reduce((s, it) => s + (it?.item === 'iron_plate' ? it.count : 0), 0);
+    expect(got).toBe(30);
+    // Rayda tren varken ray sökülemez
+    const occupied = [...w.trains.values()][0];
+    const rail = w.buildingAt(occupied.tx, occupied.ty);
+    if (rail?.type === 'rail') { w.dismantle(p.id, rail.id); expect(w.buildingAt(occupied.tx, occupied.ty)).toBeTruthy(); }
+    // Kaydet/yükle
+    const w2 = World.fromSave(JSON.parse(JSON.stringify(w.serialize())));
+    expect(w2.trains.size).toBe(1);
   });
 });
 

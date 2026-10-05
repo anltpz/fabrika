@@ -7,7 +7,7 @@ export interface PortDef {
   dir: Dir;
 }
 
-export type BuildingCategory = 'uretim' | 'lojistik' | 'sivi' | 'enerji' | 'ozel';
+export type BuildingCategory = 'uretim' | 'lojistik' | 'sivi' | 'tren' | 'enerji' | 'ozel';
 
 export interface BuildingDef {
   id: string;
@@ -175,6 +175,21 @@ const list: BuildingDef[] = [
     fuels: ['fuel'], inputs: [], outputs: [], fluidIn: [{ x: 0, y: 0, dir: 2 }], unlock: 5, buildable: true, short: 'YKT',
   },
   {
+    id: 'rail', name: 'Tren Rayı', desc: 'Sürükleyerek döşe. Komşu raylara ve istasyonlara bağlanır.',
+    w: 1, h: 1, cost: { steel_beam: 1, steel_pipe: 1 }, category: 'tren', color: 0x6a5a4a, walkable: true,
+    inputs: [], outputs: [], unlock: 6, buildable: true, short: 'RAY',
+  },
+  {
+    id: 'train_station', name: 'Tren İstasyonu', desc: 'Ön sırası raydır, tren ortada durur. Arka taraftan bantla eşya alır/verir. Yükle veya Boşalt modunda çalışır.',
+    w: 3, h: 2, cost: { steel_beam: 20, concrete: 50, motor: 2 }, category: 'tren', color: 0x4a6a8a, walkable: false,
+    inputs: [{ x: 0, y: 1, dir: 1 }], outputs: [{ x: 2, y: 1, dir: 1 }], unlock: 6, buildable: true, short: 'İST',
+  },
+  {
+    id: 'locomotive', name: 'Lokomotif', desc: 'Bir raya yerleştir. 2 vagonla (48 yuva) istasyonlar arasında sırayla gidip gelir.',
+    w: 1, h: 1, cost: { motor: 10, steel_beam: 20, modular_frame: 10, plastic: 20 }, category: 'tren', color: 0xc04a3a,
+    inputs: [], outputs: [], unlock: 6, buildable: true, short: 'LOK',
+  },
+  {
     id: 'crate', name: 'Eşya Sandığı', desc: 'Düşen eşyalar.',
     w: 1, h: 1, cost: {}, category: 'ozel', color: 0x6a4a2a, walkable: true, inputs: [], outputs: [], unlock: -1, buildable: false, short: 'SND',
   },
@@ -187,6 +202,7 @@ export const CATEGORY_NAMES: Record<BuildingCategory, string> = {
   uretim: 'Üretim',
   lojistik: 'Lojistik',
   sivi: 'Sıvılar',
+  tren: 'Trenler',
   enerji: 'Enerji',
   ozel: 'Özel',
 };
