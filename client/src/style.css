@@ -77,6 +77,7 @@ h1, h2, h3 { font-family: Rajdhani, sans-serif; margin: 0; letter-spacing: .5px;
 .hp-main { position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%); width: 300px; height: 8px; background: rgba(60,0,0,.8); border-radius: 4px; overflow: hidden; border: 1px solid #000; }
 .hp-main > div { height: 100%; background: linear-gradient(90deg, #3fbf3f, #7ae07a); transition: width .2s; }
 .mode-banner { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--accent); color: var(--accent-2); border-radius: 8px; padding: 6px 14px; font-family: Rajdhani, sans-serif; font-weight: 700; font-size: 16px; white-space: nowrap; }
+.mode-banner.plan { border-color: var(--blue); color: #a8d8ff; }
 .mode-banner.dismantle { border-color: var(--bad); color: #ff9a9a; }
 .mode-banner .cost { font-family: Inter; font-weight: 500; font-size: 12px; color: var(--muted); margin-left: 10px; }
 

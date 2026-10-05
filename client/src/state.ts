@@ -18,6 +18,7 @@ import {
 } from '@fabrika/shared';
 import type {
   BeltItem,
+  Blueprint,
   BuildingState,
   CraftJob,
   GameMap,
@@ -80,6 +81,7 @@ export class GameState extends Emitter {
   inventory: Inventory = makeInventory(INVENTORY_SLOTS);
   craftQueue: CraftJob[] = [];
   power: PowerNetInfo[] = [];
+  blueprints: Blueprint[] = [];
   stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
   lastAck = 0;
 
@@ -100,6 +102,7 @@ export class GameState extends Emitter {
     this.tech = snap.tech;
     this.inventory = snap.inventory;
     this.power = snap.power;
+    this.blueprints = snap.blueprints ?? [];
     this.emit('loaded');
   }
 
@@ -203,6 +206,10 @@ export class GameState extends Emitter {
         this.power = msg.nets;
         this.emit('power');
         break;
+      case 'blueprints':
+        this.blueprints = msg.list;
+        this.emit('blueprints');
+        break;
       case 'stats':
         this.stats = { produced: msg.produced, consumed: msg.consumed };
         this.emit('stats');
@@ -245,7 +252,7 @@ export class GameState extends Emitter {
   };
 
   /** Sunucudaki kontrolün istemci kopyası (önizleme rengi için) */
-  canPlace(type: string, x: number, y: number, rot: number, allowBelt = false): string | null {
+  canPlace(type: string, x: number, y: number, rot: number, allowBelt = false, skipRange = false): string | null {
     const def = BUILDINGS[type];
     if (!isUnlocked(def.unlock, this.tech.completed)) return 'Kilitli';
     let nodes = 0;
@@ -261,7 +268,7 @@ export class GameState extends Emitter {
     }
     if (def.mineRate && !nodes) return 'Bir kaynak düğümüne kurulmalı';
     const me = this.me();
-    if (me) {
+    if (me && !skipRange) {
       const [w, h] = footprintSize(def.w, def.h, rot);
       if (Math.hypot(me.x - (x + w / 2), me.y - (y + h / 2)) > 16) return 'Çok uzak';
     }

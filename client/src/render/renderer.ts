@@ -65,8 +65,11 @@ function darken(c: number, f: number): number {
 
 export interface GhostSpec {
   type: string;
-  tiles: Array<{ x: number; y: number; rot: number; ok: boolean }>;
+  /** type verilmişse parçanın kendi tipi kullanılır (plan önizlemesi) */
+  tiles: Array<{ x: number; y: number; rot: number; ok: boolean; type?: string }>;
   showPower: boolean;
+  /** Plan seçimi dikdörtgeni */
+  rect?: { x0: number; y0: number; x1: number; y1: number };
 }
 
 export class Renderer {
@@ -464,7 +467,11 @@ export class Renderer {
     const showTunnels = (ghost && ghost.type.startsWith('underground')) || hover?.building?.type.startsWith('underground');
     if (showTunnels) this.drawUndergroundLinks(o, vx0, vx1, vy0, vy1, ghost);
     if (ghost) {
-      const def = BUILDINGS[ghost.type];
+      if (ghost.rect) {
+        const { x0, y0, x1, y1 } = ghost.rect;
+        const ax = Math.min(x0, x1), ay = Math.min(y0, y1);
+        o.rect(ax, ay, Math.abs(x1 - x0) + 1, Math.abs(y1 - y0) + 1).fill({ color: 0x4fb3ff, alpha: 0.12 }).stroke({ width: 0.08, color: 0x4fb3ff, alpha: 0.9 });
+      }
       if (ghost.showPower) {
         for (const b of this.state.buildings.values()) {
           if (b.type !== 'power_pole') continue;
@@ -472,13 +479,15 @@ export class Renderer {
         }
       }
       for (const t of ghost.tiles) {
+        const type = t.type ?? ghost.type;
+        const def = BUILDINGS[type];
         const [W, H] = footprintSize(def.w, def.h, t.rot);
         const col = t.ok ? 0x60e060 : 0xff5050;
         o.rect(t.x, t.y, W, H).fill({ color: col, alpha: 0.3 }).stroke({ width: 0.05, color: col, alpha: 0.9 });
-        if (ghost.type === 'power_pole') {
+        if (type === 'power_pole' && !t.type) {
           o.rect(t.x - POLE_SUPPLY_RADIUS, t.y - POLE_SUPPLY_RADIUS, POLE_SUPPLY_RADIUS * 2 + 1, POLE_SUPPLY_RADIUS * 2 + 1).stroke({ width: 0.05, color: 0x4fb3ff, alpha: 0.8 });
         }
-        drawGhostArrows(o, def, t.x, t.y, t.rot, isBelt(ghost.type));
+        drawGhostArrows(o, def, t.x, t.y, t.rot, isBelt(type));
       }
     }
   }

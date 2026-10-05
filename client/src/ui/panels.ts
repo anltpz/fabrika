@@ -8,6 +8,7 @@ import {
   PURITY_NAMES,
   RECIPES,
   RECIPE_LIST,
+  blueprintCost,
   SPLITTER_FILTERS,
   STATUS_NAMES,
   countItem,
@@ -24,7 +25,7 @@ import type { BuildingCategory, BuildingState, ClientMsg } from '@fabrika/shared
 import type { GameState } from '../state';
 import { chip, costChips, flowChips, fmt, h, hex, icon } from './dom';
 
-type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats';
+type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats' | 'blueprints';
 
 const STATUS_DOT: Record<string, string> = {
   working: '#5ad65a', idle: '#9aa0a6', nopower: '#e04848', tripped: '#ff3030', full: '#e8c040', nofuel: '#e07a30', norecipe: '#6a9ae8', noinput: '#e8c040', unpaired: '#e04848',
@@ -37,6 +38,8 @@ export class Panels {
   private buildTab: BuildingCategory = 'uretim';
   private renderTimer = 0;
   onSelectBuild: (type: string) => void = () => {};
+  onBlueprintPlace: (id: number) => void = () => {};
+  onBlueprintNew: () => void = () => {};
 
   constructor(private state: GameState, private parent: HTMLElement, private send: (m: ClientMsg) => void) {
     const rerender = () => this.scheduleRender();
@@ -45,6 +48,7 @@ export class Panels {
     state.on('tech', rerender);
     state.on('power', () => { if (this.kind === 'machine' || this.kind === 'stats') rerender(); });
     state.on('stats', () => { if (this.kind === 'stats') rerender(); });
+    state.on('blueprints', () => { if (this.kind === 'blueprints') rerender(); });
     state.on('buildings', (up: BuildingState[], rem: number[]) => {
       if (this.kind === 'stats') { rerender(); return; }
       if (this.kind !== 'machine' || this.machineId === null) return;
@@ -54,7 +58,7 @@ export class Panels {
   }
 
   isOpen() {
-    return this.kind !== null;
+    return this.kind !== null || (this.kindOverride && !!this.wrap);
   }
 
   private scheduleRender() {
@@ -73,6 +77,7 @@ export class Panels {
   }
 
   close() {
+    this.kindOverride = false;
     this.kind = null;
     this.machineId = null;
     this.wrap?.remove();
@@ -96,6 +101,7 @@ export class Panels {
     else if (this.kind === 'hub') el = this.renderHub();
     else if (this.kind === 'machine') el = this.renderMachine();
     else if (this.kind === 'stats') el = this.renderStats();
+    else if (this.kind === 'blueprints') el = this.renderBlueprints();
     if (!el) { this.close(); return; }
     this.wrap?.remove();
     this.wrap = el;
@@ -234,6 +240,48 @@ export class Panels {
     });
     return this.shell('HUB · Kademeler', body);
   }
+
+  // ------------------------------------------------------------ planlar
+
+  private renderBlueprints(): HTMLElement {
+    const body = h('div');
+    body.append(h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' } },
+      h('button', { onclick: () => { this.close(); this.onBlueprintNew(); } }, '+ Yeni Plan'),
+      h('span', { class: 'muted', style: { fontSize: '12px' } }, 'Fareyle bir alan seç; içindeki yapılar tarifleri ve filtreleriyle kaydedilir. Planlar takımın ortak kütüphanesindedir.'),
+    ));
+    const list = this.state.blueprints;
+    if (!list.length) body.append(h('p', { class: 'muted' }, 'Henüz plan yok.'));
+    for (const bp of list) {
+      const counts: Record<string, number> = {};
+      for (const e of bp.entries) counts[e.type] = (counts[e.type] ?? 0) + 1;
+      const summary = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${n}× ${BUILDINGS[t].name}`).join(', ');
+      const cost = blueprintCost(bp.entries);
+      body.append(h('div', { class: 'milestone' },
+        h('h3', {}, bp.name, h('span', { class: 'badge' }, `${bp.w}×${bp.h}`), h('span', { class: 'muted', style: { fontSize: '12px', fontFamily: 'Inter', fontWeight: '400' } }, `· ${bp.author}`)),
+        h('div', { class: 'muted', style: { fontSize: '12px', margin: '4px 0 8px' } }, summary),
+        costChips(cost, this.state.inventory),
+        h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px' } },
+          h('button', { onclick: () => { this.close(); this.onBlueprintPlace(bp.id); } }, 'Kur'),
+          h('button', { class: 'ghost', onclick: () => { if (confirm(`"${bp.name}" planı silinsin mi?`)) this.send({ t: 'bpDelete', id: bp.id }); } }, 'Sil'),
+        ),
+      ));
+    }
+    return this.shell('Plan Kütüphanesi', body);
+  }
+
+  /** Basit metin giriş penceresi */
+  prompt(title: string, placeholder: string, onOk: (value: string) => void) {
+    this.close();
+    const input = h('input', { placeholder, maxlength: '30', style: { width: '100%' } }) as HTMLInputElement;
+    const ok = () => { const v = input.value.trim(); this.close(); if (v) onOk(v); };
+    input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') ok(); if (e.key === 'Escape') this.close(); });
+    const body = h('div', {}, input, h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } }, h('button', { onclick: ok }, 'Kaydet'), h('button', { class: 'ghost', onclick: () => this.close() }, 'Vazgeç')));
+    this.wrap = this.shell(title, body, true);
+    this.parent.append(this.wrap);
+    this.kindOverride = true;
+    input.focus();
+  }
+  private kindOverride = false;
 
   // ------------------------------------------------------------ istatistik
 

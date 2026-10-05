@@ -10,8 +10,10 @@ import {
   hasTree,
   inputVelocity,
   isBelt,
+  blueprintCost,
   isUnlocked,
   itemName,
+  rotateBlueprint,
   moveCircle,
   tileKey,
 } from '@fabrika/shared';
@@ -22,7 +24,7 @@ import { costChips } from './ui/dom';
 import type { Hud } from './ui/hud';
 import type { Panels } from './ui/panels';
 
-type Mode = 'none' | 'build' | 'dismantle';
+type Mode = 'none' | 'build' | 'dismantle' | 'bpSelect' | 'bpPlace';
 
 const DEFAULT_HOTBAR = ['belt_mk1', 'miner_mk1', 'smelter', 'constructor', 'assembler', 'splitter', 'power_pole', 'biomass_burner', 'storage'];
 
@@ -41,6 +43,8 @@ export class Controller {
   private dragStart: { x: number; y: number } | null = null;
   private lastHarvest = 0;
   private tooltipKey = '';
+  private bpId = 0;
+  private selStart: { x: number; y: number } | null = null;
   hotbar: string[];
 
   constructor(
@@ -63,6 +67,8 @@ export class Controller {
     canvas.addEventListener('wheel', (e) => { e.preventDefault(); renderer.setZoom(renderer.zoom * (e.deltaY > 0 ? 0.9 : 1.1)); }, { passive: false });
     hud.onHotbar = (i) => this.selectHotbar(i);
     panels.onSelectBuild = (type) => this.startBuild(type);
+    panels.onBlueprintNew = () => { this.mode = 'bpSelect'; this.selStart = null; this.updateBanner(); this.refreshHotbar(); };
+    panels.onBlueprintPlace = (id) => { this.mode = 'bpPlace'; this.bpId = id; this.rot = 0; this.updateBanner(); this.refreshHotbar(); };
     this.refreshHotbar();
   }
 
@@ -94,6 +100,7 @@ export class Controller {
     if (k === 'i') { this.panels.toggle('inventory'); return; }
     if (k === 'h') { this.panels.toggle('hub'); return; }
     if (k === 'p') { this.panels.toggle('stats'); return; }
+    if (k === 'b') { this.panels.toggle('blueprints'); return; }
     if (k === 'f') {
       if (this.mode === 'dismantle') this.cancelMode(); else { this.mode = 'dismantle'; this.panels.close(); this.updateBanner(); this.refreshHotbar(); }
       return;
@@ -141,6 +148,7 @@ export class Controller {
   cancelMode() {
     this.mode = 'none';
     this.dragStart = null;
+    this.selStart = null;
     this.updateBanner();
     this.refreshHotbar();
   }
@@ -150,6 +158,13 @@ export class Controller {
       const def = BUILDINGS[this.buildType];
       const dirs = ['→', '↓', '←', '↑'];
       this.hud.setBanner(`İnşa: ${def.name} ${dirs[this.rot]}  ·  R döndür · Sağ tık iptal${isBelt(this.buildType) ? ' · Sürükleyerek çiz' : ''}`, '', costChips(def.cost, this.state.inventory));
+    } else if (this.mode === 'bpSelect') {
+      this.hud.setBanner('Plan oluştur: kaydedilecek alanı fareyle sürükleyerek seç · Sağ tık iptal', 'plan');
+    } else if (this.mode === 'bpPlace') {
+      const bp = this.state.blueprints.find((b) => b.id === this.bpId);
+      if (!bp) { this.cancelMode(); return; }
+      const dirs = ['→', '↓', '←', '↑'];
+      this.hud.setBanner(`Plan: ${bp.name} ${dirs[this.rot]}  ·  R döndür · tıkla kur · Sağ tık iptal`, 'plan', costChips(blueprintCost(bp.entries), this.state.inventory));
     } else if (this.mode === 'dismantle') {
       this.hud.setBanner('Söküm modu · tıklanan yapı sökülür (malzeme iade) · F/Sağ tık çık', 'dismantle');
     } else {
@@ -212,6 +227,16 @@ export class Controller {
       return;
     }
     if (e.button !== 0) return;
+    if (this.mode === 'bpSelect') {
+      const [tx, ty] = this.mouseTile();
+      this.selStart = { x: tx, y: ty };
+      return;
+    }
+    if (this.mode === 'bpPlace') {
+      const o = this.blueprintOrigin();
+      if (o) this.send({ t: 'bpPlace', id: this.bpId, x: o[0], y: o[1], rot: this.rot });
+      return;
+    }
     if (this.mode === 'build') {
       if (isBelt(this.buildType)) {
         const [tx, ty] = this.mouseTile();
@@ -242,7 +267,22 @@ export class Controller {
     this.attack();
   }
 
+  private blueprintOrigin(): [number, number] | null {
+    const bp = this.state.blueprints.find((b) => b.id === this.bpId);
+    if (!bp) return null;
+    const r = rotateBlueprint(bp, this.rot);
+    const [mx, my] = this.mouseWorld();
+    return [Math.floor(mx - r.w / 2 + 0.5), Math.floor(my - r.h / 2 + 0.5)];
+  }
+
   private onMouseUp(e: MouseEvent) {
+    if (e.button === 0 && this.mode === 'bpSelect' && this.selStart) {
+      const [ex, ey] = this.mouseTile();
+      const s = this.selStart;
+      this.cancelMode();
+      this.panels.prompt('Plan adı', 'Örn. Vida hattı', (name) => this.send({ t: 'bpSave', name, x0: s.x, y0: s.y, x1: ex, y1: ey }));
+      return;
+    }
     if (e.button !== 0 || !this.dragStart) return;
     const [ex, ey] = this.mouseTile();
     const path = this.beltPath(this.dragStart.x, this.dragStart.y, ex, ey);
@@ -365,14 +405,30 @@ export class Controller {
         ghost = { type: this.buildType, showPower, tiles: [{ x, y, rot: this.rot, ok: this.state.canPlace(this.buildType, x, y, this.rot) === null }] };
       }
     }
+    if (this.mode === 'bpSelect') {
+      const s = this.selStart ?? { x: tx, y: ty };
+      ghost = { type: '', tiles: [], showPower: false, rect: { x0: s.x, y0: s.y, x1: tx, y1: ty } };
+    } else if (this.mode === 'bpPlace') {
+      const bp = this.state.blueprints.find((b) => b.id === this.bpId);
+      const o = this.blueprintOrigin();
+      if (bp && o) {
+        const r = rotateBlueprint(bp, this.rot);
+        ghost = {
+          type: '',
+          showPower: false,
+          rect: { x0: o[0], y0: o[1], x1: o[0] + r.w - 1, y1: o[1] + r.h - 1 },
+          tiles: r.entries.map((en) => ({ type: en.type, x: o[0] + en.dx, y: o[1] + en.dy, rot: en.rot, ok: this.state.canPlace(en.type, o[0] + en.dx, o[1] + en.dy, en.rot, false, true) === null })),
+        };
+      }
+    }
     const hb = this.hoveredBuilding();
     const hover = { x: tx, y: ty, building: this.mode === 'build' ? undefined : hb, dismantle: this.mode === 'dismantle' };
     this.updateTooltip(tx, ty, hb);
-    return { ghost, hover: this.mode === 'build' ? null : hover };
+    return { ghost, hover: this.mode === 'build' || this.mode.startsWith('bp') ? null : hover };
   }
 
   private updateTooltip(tx: number, ty: number, b: BuildingState | undefined) {
-    if (this.panels.isOpen() || this.mode === 'build') { this.hud.showTooltip(0, 0, null); this.tooltipKey = ''; return; }
+    if (this.panels.isOpen() || this.mode === 'build' || this.mode.startsWith('bp')) { this.hud.showTooltip(0, 0, null); this.tooltipKey = ''; return; }
     let key = '';
     let html: string | null = null;
     if (b) {

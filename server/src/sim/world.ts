@@ -36,7 +36,11 @@ import {
   PURITY_NAMES,
   RECIPES,
   STORAGE_SLOTS,
+  BLUEPRINT_MAX_COUNT,
+  BLUEPRINT_MAX_SIZE,
   SPLITTER_FILTERS,
+  blueprintCost,
+  rotateBlueprint,
   UNDERGROUND_RANGE,
   addItem,
   countItem,
@@ -63,6 +67,7 @@ import {
   worldPorts,
 } from '@fabrika/shared';
 import type {
+  Blueprint,
   BuildingState,
   CraftJob,
   Dir,
@@ -127,6 +132,7 @@ export interface SaveData {
   nests: Array<{ id: number; hp: number; alive: boolean }>;
   removedTrees: number[];
   tech: TechState;
+  blueprints?: Blueprint[];
 }
 
 const MACHINE_OUT_CAP = 50;
@@ -163,6 +169,7 @@ export class World {
   tech: TechState = { completed: 0, delivered: {} };
   cheats = false;
   stats = new ProductionStats();
+  blueprints: Blueprint[] = [];
 
   /** Güç ağları önbelleği */
   private powerDirty = true;
@@ -224,6 +231,7 @@ export class World {
       if (x < w.map.size && y < w.map.size) w.map.trees[y * w.map.size + x] = 0;
     }
     w.tech = data.tech;
+    w.blueprints = data.blueprints ?? [];
     w.changed.clear();
     return w;
   }
@@ -239,6 +247,7 @@ export class World {
       nests: this.nests.map((n) => ({ id: n.id, hp: n.hp, alive: n.alive })),
       removedTrees: [...this.removedTrees],
       tech: this.tech,
+      blueprints: this.blueprints,
     };
   }
 
@@ -749,6 +758,74 @@ export class World {
       this.toast(id, `${moved} parça teslim edildi`, 'good');
     }
     this.broadcast({ t: 'tech', tech: this.tech });
+  }
+
+  // ---------------------------------------------------------------- planlar
+
+  bpSave(id: number, name: string, x0: number, y0: number, x1: number, y1: number) {
+    const p = this.players.get(id);
+    if (!p) return;
+    const ax = Math.min(x0, x1) | 0, ay = Math.min(y0, y1) | 0, bx = Math.max(x0, x1) | 0, by = Math.max(y0, y1) | 0;
+    if (bx - ax + 1 > BLUEPRINT_MAX_SIZE || by - ay + 1 > BLUEPRINT_MAX_SIZE) { this.toast(id, `Plan en fazla ${BLUEPRINT_MAX_SIZE}×${BLUEPRINT_MAX_SIZE} olabilir`); return; }
+    if (this.blueprints.length >= BLUEPRINT_MAX_COUNT) { this.toast(id, 'Plan kütüphanesi dolu, önce bir plan sil'); return; }
+    const inside: BuildingState[] = [];
+    for (const b of this.buildings.values()) {
+      if (b.type === 'hub' || b.type === 'crate') continue;
+      const def = BUILDINGS[b.type];
+      const [w, h] = footprintSize(def.w, def.h, b.rot);
+      if (b.x >= ax && b.y >= ay && b.x + w - 1 <= bx && b.y + h - 1 <= by) inside.push(b);
+    }
+    if (!inside.length) { this.toast(id, 'Seçilen alanda yapı yok'); return; }
+    let mx = Infinity, my = Infinity, Mx = -Infinity, My = -Infinity;
+    for (const b of inside) {
+      const def = BUILDINGS[b.type];
+      const [w, h] = footprintSize(def.w, def.h, b.rot);
+      mx = Math.min(mx, b.x); my = Math.min(my, b.y); Mx = Math.max(Mx, b.x + w); My = Math.max(My, b.y + h);
+    }
+    const bp: Blueprint = {
+      id: this.nextId++,
+      name: String(name ?? '').trim().slice(0, 30) || 'Adsız plan',
+      author: p.name,
+      w: Mx - mx,
+      h: My - my,
+      entries: inside.map((b) => ({ type: b.type, dx: b.x - mx, dy: b.y - my, rot: b.rot, recipe: b.recipe, filters: b.filters ? [...b.filters] : undefined })),
+    };
+    this.blueprints.push(bp);
+    this.broadcast({ t: 'blueprints', list: this.blueprints });
+    this.sysChat(`${p.name} yeni bir plan kaydetti: ${bp.name} (${bp.entries.length} yapı)`);
+  }
+
+  bpPlace(id: number, bpId: number, x: number, y: number, rot: number): boolean {
+    const p = this.players.get(id);
+    const bp = this.blueprints.find((b) => b.id === bpId);
+    if (!p || !bp) return false;
+    x |= 0; y |= 0;
+    const r = rotateBlueprint(bp, rot | 0);
+    if (Math.hypot(p.x - (x + r.w / 2), p.y - (y + r.h / 2)) > BUILD_RANGE + Math.max(r.w, r.h) / 2) { this.toast(id, 'Çok uzak'); return false; }
+    for (const e of r.entries) {
+      const err = this.canPlace(e.type, x + e.dx, y + e.dy, e.rot);
+      if (err) { this.toast(id, `Plan kurulamadı: ${err} (${BUILDINGS[e.type].name})`); return false; }
+    }
+    const cost = blueprintCost(r.entries);
+    if (!this.cheats && !hasItems(p.inventory, cost)) { this.toast(id, 'Plan için yeterli malzeme yok'); return false; }
+    if (!this.cheats) removeItems(p.inventory, cost);
+    p.dirtyInv = true;
+    for (const e of r.entries) {
+      const b = this.addBuilding(e.type, x + e.dx, y + e.dy, e.rot);
+      if (e.recipe && RECIPES[e.recipe] && isUnlocked(RECIPES[e.recipe].unlock, this.tech.completed)) b.recipe = e.recipe;
+      if (e.filters && b.filters) b.filters = [...e.filters];
+    }
+    this.broadcast({ t: 'fx', kind: 'build', x: x + r.w / 2 - 0.5, y: y + r.h / 2 - 0.5, by: id });
+    return true;
+  }
+
+  bpDelete(id: number, bpId: number) {
+    const p = this.players.get(id);
+    const i = this.blueprints.findIndex((b) => b.id === bpId);
+    if (!p || i < 0) return;
+    const [bp] = this.blueprints.splice(i, 1);
+    this.broadcast({ t: 'blueprints', list: this.blueprints });
+    this.sysChat(`${p.name} "${bp.name}" planını sildi.`);
   }
 
   /** Çıkışa eşleşen bir giriş var mı (durum göstergesi için) */

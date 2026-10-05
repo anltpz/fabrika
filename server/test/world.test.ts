@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILDINGS, TICK_RATE, footprint, generateMap, hasTree, terrainBuildable, tileKey } from '@fabrika/shared';
+import { BUILDINGS, TICK_RATE, footprint, generateMap, hasTree, rotateBlueprint, terrainBuildable, tileKey } from '@fabrika/shared';
 import { World } from '../src/sim/world';
 import { computeNetworks } from '../src/sim/power';
 import { Persistence } from '../src/persistence';
@@ -271,6 +271,44 @@ describe('oyuncu', () => {
     expect(p.hp).toBeGreaterThan(50);
     expect(w.count(p.id, 'iron_plate')).toBe(0);
     expect([...w.buildings.values()].some((b) => b.type === 'crate')).toBe(true);
+  });
+});
+
+describe('planlar', () => {
+  it('döndürme 4 kez uygulanınca aynı plan', () => {
+    const bp = { w: 3, h: 2, entries: [{ type: 'constructor', dx: 0, dy: 0, rot: 0 }, { type: 'belt_mk1', dx: 2, dy: 1, rot: 1 }] };
+    expect(rotateBlueprint(bp, 4)).toEqual(bp);
+    const r1 = rotateBlueprint(bp, 1);
+    expect([r1.w, r1.h]).toEqual([2, 3]);
+    // Kurucu (2x2) sol üstten sağ üste geçer, bant (2,1) -> (0,2)
+    expect(r1.entries[0]).toMatchObject({ dx: 0, dy: 0, rot: 1 });
+    expect(r1.entries[1]).toMatchObject({ dx: 0, dy: 2, rot: 2 });
+  });
+
+  it('kaydedilen plan döndürülerek başka yere kurulur, tarifler kopyalanır', () => {
+    const { w, p } = setup();
+    const x = Math.floor(p.x) + 6, y = Math.floor(p.y) - 6;
+    clearArea(w, x - 1, y - 1, x + 14, y + 8);
+    p.x = x + 6; p.y = y + 7.5;
+    w.build(p.id, 'constructor', x, y, 0);
+    w.setRecipe(p.id, w.buildingAt(x, y)!.id, 'screw');
+    w.buildBelts(p.id, 'belt_mk1', [{ x: x + 2, y, dir: 0 }, { x: x + 3, y, dir: 0 }]);
+    w.bpSave(p.id, 'Vida hattı', x - 1, y - 1, x + 4, y + 2);
+    expect(w.blueprints.length).toBe(1);
+    expect(w.blueprints[0].entries.length).toBe(3);
+    const bp = w.blueprints[0];
+    expect(w.bpPlace(p.id, bp.id, x + 8, y, 1)).toBe(true);
+    // Döndürülmüş: kurucu 2x2 üstte, bantlar sağ sütunda aşağı doğru (rot 1) — kurucunun çıkışı (9,1)'den aşağı
+    const c = w.buildingAt(x + 8, y)!;
+    expect(c.type).toBe('constructor');
+    expect(c.rot).toBe(1);
+    expect(c.recipe).toBe('screw');
+    expect(w.buildingAt(x + 9, y + 2)?.type).toBe('belt_mk1');
+    expect(w.buildingAt(x + 9, y + 3)?.rot).toBe(1);
+    // Aynı yere ikinci kez kurulamaz
+    expect(w.bpPlace(p.id, bp.id, x + 8, y, 1)).toBe(false);
+    w.bpDelete(p.id, bp.id);
+    expect(w.blueprints.length).toBe(0);
   });
 });
 
