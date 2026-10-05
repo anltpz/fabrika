@@ -115,6 +115,8 @@ export interface PlayerData {
   craftQueue: CraftJob[];
   dirtyInv: boolean;
   dirtyCraft: boolean;
+  /** Sunucunun kendi test botu: kişisel hileleri vardır */
+  isBot?: boolean;
 }
 
 interface Enemy {
@@ -298,6 +300,11 @@ export class World {
 
   // ---------------------------------------------------------------- yardımcılar
 
+  /** Sunucu hileli ise herkes, değilse sadece test botları hile kullanabilir */
+  cheatsFor(p: PlayerData | undefined): boolean {
+    return this.cheats || !!p?.isBot;
+  }
+
   private broadcast(msg: ServerMsg) {
     this.out.push(msg);
   }
@@ -470,7 +477,7 @@ export class World {
 
   // ---------------------------------------------------------------- oyuncular
 
-  join(name: string, token: string | undefined): PlayerData | string {
+  join(name: string, token: string | undefined, isBot = false): PlayerData | string {
     if (token) {
       for (const p of this.players.values()) {
         if (p.token === token) {
@@ -508,6 +515,7 @@ export class World {
       dirtyInv: false,
       dirtyCraft: false,
     };
+    if (isBot) p.isBot = true;
     this.players.set(id, p);
     return p;
   }
@@ -555,8 +563,8 @@ export class World {
     if (type === 'locomotive') return this.placeTrain(p, x, y);
     const err = this.canPlace(type, x, y, rot, p);
     if (err) { this.toast(id, err); return false; }
-    if (!hasItems(p.inventory, def.cost) && !this.cheats) { this.toast(id, 'Yeterli malzeme yok'); return false; }
-    if (!this.cheats) removeItems(p.inventory, def.cost);
+    if (!hasItems(p.inventory, def.cost) && !this.cheatsFor(p)) { this.toast(id, 'Yeterli malzeme yok'); return false; }
+    if (!this.cheatsFor(p)) removeItems(p.inventory, def.cost);
     p.dirtyInv = true;
     const b = this.addBuilding(type, x, y, rot);
     this.broadcast({ t: 'fx', kind: 'build', x: b.x, y: b.y, by: id });
@@ -586,9 +594,9 @@ export class World {
           continue;
         }
         // Yükseltme
-        if (!this.cheats && !hasItems(p.inventory, def.cost)) { this.toast(id, 'Yeterli malzeme yok'); break; }
+        if (!this.cheatsFor(p) && !hasItems(p.inventory, def.cost)) { this.toast(id, 'Yeterli malzeme yok'); break; }
         if (!isUnlocked(def.unlock, this.tech.completed)) { this.toast(id, 'Bu yapı henüz açılmadı'); break; }
-        if (!this.cheats) removeItems(p.inventory, def.cost);
+        if (!this.cheatsFor(p)) removeItems(p.inventory, def.cost);
         this.giveOrDrop(p, Object.entries(BUILDINGS[existing.type].cost));
         existing.type = type;
         existing.rot = dir;
@@ -598,8 +606,8 @@ export class World {
       }
       const err = this.canPlace(type, x, y, dir, p);
       if (err) { this.toast(id, err); continue; }
-      if (!this.cheats && !hasItems(p.inventory, def.cost)) { this.toast(id, 'Yeterli malzeme yok'); break; }
-      if (!this.cheats) removeItems(p.inventory, def.cost);
+      if (!this.cheatsFor(p) && !hasItems(p.inventory, def.cost)) { this.toast(id, 'Yeterli malzeme yok'); break; }
+      if (!this.cheatsFor(p)) removeItems(p.inventory, def.cost);
       p.dirtyInv = true;
       this.addBuilding(type, x, y, dir);
       placed++;
@@ -971,8 +979,8 @@ export class World {
       if (err) { this.toast(id, `Plan kurulamadı: ${err} (${BUILDINGS[e.type].name})`); return false; }
     }
     const cost = blueprintCost(r.entries);
-    if (!this.cheats && !hasItems(p.inventory, cost)) { this.toast(id, 'Plan için yeterli malzeme yok'); return false; }
-    if (!this.cheats) removeItems(p.inventory, cost);
+    if (!this.cheatsFor(p) && !hasItems(p.inventory, cost)) { this.toast(id, 'Plan için yeterli malzeme yok'); return false; }
+    if (!this.cheatsFor(p)) removeItems(p.inventory, cost);
     p.dirtyInv = true;
     for (const e of r.entries) {
       const b = this.addBuilding(e.type, x + e.dx, y + e.dy, e.rot);
@@ -1040,12 +1048,12 @@ export class World {
   private command(p: PlayerData, t: string) {
     const [cmd, ...args] = t.slice(1).split(/\s+/);
     if (cmd === 'yardim' || cmd === 'help') {
-      this.send(p.id, { t: 'chat', from: 'Sistem', color: 0xffd060, sys: true, text: 'Komutlar: /yardim, /kim, /konum' + (this.cheats ? ', /ver <eşya> <adet>, /kademe, /tp <x> <y>' : '') });
+      this.send(p.id, { t: 'chat', from: 'Sistem', color: 0xffd060, sys: true, text: 'Komutlar: /yardim, /kim, /konum' + (this.cheatsFor(p) ? ', /ver <eşya> <adet>, /kademe, /tp <x> <y>' : '') + ', /bot [adet] [dakika], /bot dur, /hiz <1-4>' });
     } else if (cmd === 'kim') {
       this.send(p.id, { t: 'chat', from: 'Sistem', color: 0xffd060, sys: true, text: 'Oyuncular: ' + [...this.players.values()].filter((x) => x.online).map((x) => x.name).join(', ') });
     } else if (cmd === 'konum') {
       this.send(p.id, { t: 'chat', from: 'Sistem', color: 0xffd060, sys: true, text: `Konum: ${p.x.toFixed(1)}, ${p.y.toFixed(1)}` });
-    } else if (this.cheats && cmd === 'ver') {
+    } else if (this.cheatsFor(p) && cmd === 'ver') {
       const item = args[0];
       const n = parseInt(args[1] ?? '100', 10) || 100;
       if (item === 'hepsi') {
@@ -1054,10 +1062,10 @@ export class World {
         addItem(p.inventory, item, n);
       }
       p.dirtyInv = true;
-    } else if (this.cheats && cmd === 'tp') {
+    } else if (this.cheatsFor(p) && cmd === 'tp') {
       const x = parseFloat(args[0]), y = parseFloat(args[1]);
       if (Number.isFinite(x) && Number.isFinite(y)) { p.x = x; p.y = y; }
-    } else if (this.cheats && cmd === 'kademe') {
+    } else if (this.cheatsFor(p) && cmd === 'kademe') {
       if (this.tech.completed < MILESTONES.length) this.tech.completed++;
       this.tech.delivered = {};
       this.broadcast({ t: 'tech', tech: this.tech });
@@ -1297,8 +1305,8 @@ export class World {
     if (this.buildingAt(x, y)?.type !== 'rail') { this.toast(p.id, 'Lokomotif bir raya yerleştirilmeli'); return false; }
     if (Math.hypot(p.x - x - 0.5, p.y - y - 0.5) > BUILD_RANGE) { this.toast(p.id, 'Çok uzak'); return false; }
     for (const t of this.trains.values()) if (occupiedTiles(t).has(y * 4096 + x)) { this.toast(p.id, 'Burada zaten bir tren var'); return false; }
-    if (!this.cheats && !hasItems(p.inventory, TRAIN_COST)) { this.toast(p.id, 'Yeterli malzeme yok'); return false; }
-    if (!this.cheats) removeItems(p.inventory, TRAIN_COST);
+    if (!this.cheatsFor(p) && !hasItems(p.inventory, TRAIN_COST)) { this.toast(p.id, 'Yeterli malzeme yok'); return false; }
+    if (!this.cheatsFor(p)) removeItems(p.inventory, TRAIN_COST);
     p.dirtyInv = true;
     const t = newTrain(this.nextId++, x, y);
     t.schedule = stationsReachable(x, y, this);

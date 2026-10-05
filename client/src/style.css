@@ -124,6 +124,13 @@ select:focus { border-color: var(--accent); }
 .icon-pick button.on { border-color: var(--accent); background: rgba(242,163,58,.15); }
 .modal:has(.map-wrap) { width: min(1000px, calc(100vw - 32px)); }
 
+.bot-summary { font-family: Rajdhani, sans-serif; font-weight: 700; font-size: 14px; background: #12151a; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 10px 0; }
+.bot-log { height: 300px; overflow-y: auto; background: #0c0e11; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; }
+.bot-log .bl.ok { color: #7ae07a; }
+.bot-log .bl.warn { color: #f0c860; }
+.bot-log .bl.err { color: #ff7a7a; }
+.hud-btns button.on { border-color: var(--good); color: var(--good); }
+
 /* ---------- Toast ---------- */
 .toasts { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .toast { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 8px 14px; border-radius: 6px; font-size: 14px; animation: tin .2s ease-out; }

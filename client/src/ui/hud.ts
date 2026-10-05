@@ -42,6 +42,7 @@ export class Hud {
       h('button', { class: 'ghost', onclick: () => this.onOpenPanel('stats'), title: 'P' }, '📊 İstatistik'),
       h('button', { class: 'ghost', onclick: () => this.onOpenPanel('blueprints'), title: 'B' }, '📐 Planlar'),
       h('button', { class: 'ghost', onclick: () => this.onOpenPanel('map'), title: 'M' }, '🗺️ Harita'),
+      h('button', { class: 'ghost bot-btn', onclick: () => this.onOpenPanel('bots'), title: 'Test botları ve oyun hızı' }, '🤖 Botlar'),
     );
     this.btns = btns;
     const top = h('div', { class: 'hud-top' }, this.roomBox, this.techMini, this.power, btns);
@@ -66,7 +67,15 @@ export class Hud {
     this.root.append(top, mm, keys, this.hp, this.banner, this.hotbar, this.toasts, this.chatWrap, this.tooltip);
     parent.append(this.root);
     (roomCode as HTMLElement).textContent = state.room;
-    if (state.speed !== 1) this.ping.before(h('span', { class: 'badge cur', title: 'Oyun hızı' }, `${state.speed}x`));
+    const speedBadge = h('span', { class: 'badge cur', title: 'Oyun hızı' });
+    this.ping.before(speedBadge);
+    const renderSpeed = () => { speedBadge.textContent = `${state.speed}x`; speedBadge.style.display = state.speed === 1 ? 'none' : ''; };
+    renderSpeed();
+    state.on('speed', renderSpeed);
+    const botBtn = this.btns.querySelector('.bot-btn') as HTMLElement;
+    const renderBotBtn = () => { botBtn.textContent = state.botStatus.running ? `🤖 Botlar (${state.botStatus.count})` : '🤖 Botlar'; botBtn.classList.toggle('on', state.botStatus.running); };
+    renderBotBtn();
+    state.on('bots', renderBotBtn);
 
     state.on('players', () => this.renderPlayers());
     state.on('players:tick', () => this.renderPlayersHp());

@@ -6,6 +6,7 @@ import type { ClientMsg } from '@fabrika/shared';
 import { WebSocketServer } from 'ws';
 import { Persistence } from './persistence';
 import type { Room } from './room';
+import { randomBytes } from 'node:crypto';
 import { RoomManager } from './roomManager';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -13,6 +14,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = resolve(process.env.STATIC_DIR ?? join(here, '../../client/dist'));
 const SAVE_FILE = process.env.SAVE_FILE ?? resolve(here, '../../saves/fabrika.db');
 const CHEATS = process.env.CHEATS === '1';
+/** Oyun içi botların kendini tanıttığı gizli anahtar (sadece bu süreç bilir) */
+const BOT_KEY = randomBytes(16).toString('hex');
 const GAME_SPEED = Math.max(1, Math.min(4, Number(process.env.GAME_SPEED ?? 1) || 1));
 
 const MIME: Record<string, string> = {
@@ -27,7 +30,7 @@ const MIME: Record<string, string> = {
 };
 
 const persistence = new Persistence(SAVE_FILE);
-const manager = new RoomManager(persistence, CHEATS, GAME_SPEED);
+const manager = new RoomManager(persistence, CHEATS, GAME_SPEED, { url: `ws://127.0.0.1:${PORT}/ws`, key: BOT_KEY });
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -49,6 +52,10 @@ const server = createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
+// Sunucu hataları (ör. port kullanımda) aşağıda http sunucusunda ele alınır
+wss.on('error', () => {});
+// Sunucu hataları (ör. port kullanımda) aşağıda http sunucusunda ele alınır
+wss.on('error', () => {});
 
 wss.on('connection', (ws) => {
   let room: Room | undefined;
@@ -57,7 +64,7 @@ wss.on('connection', (ws) => {
   const rateTimer = setInterval(() => { msgCount = 0; }, 1000);
 
   ws.on('message', (raw) => {
-    if (++msgCount > 120) return;
+    if (++msgCount > 120 && !(room && playerId !== undefined && room.isBot(playerId))) return;
     let msg: ClientMsg;
     try {
       msg = JSON.parse(String(raw));
@@ -70,7 +77,7 @@ wss.on('connection', (ws) => {
       const name = String(msg.name ?? '').trim().slice(0, 16) || 'İşçi';
       const r = msg.create ? manager.create() : msg.room ? manager.get(String(msg.room)) : undefined;
       if (!r) { ws.send(JSON.stringify({ t: 'error', msg: 'Oda bulunamadı' })); return; }
-      const res = r.addPlayer(ws, name, typeof msg.token === 'string' ? msg.token : undefined);
+      const res = r.addPlayer(ws, name, typeof msg.token === 'string' ? msg.token : undefined, msg.botKey === BOT_KEY);
       if (typeof res === 'string') { ws.send(JSON.stringify({ t: 'error', msg: res })); return; }
       room = r;
       playerId = res;
@@ -90,6 +97,15 @@ wss.on('connection', (ws) => {
     clearInterval(rateTimer);
     if (room && playerId !== undefined) room.removePlayer(playerId);
   });
+});
+
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\nPort ${PORT} kullanımda: büyük ihtimalle başka bir Fabrika sunucusu zaten açık.`);
+    console.error('Açık olan sunucu penceresini kapat (Ctrl+C) ya da farklı bir port kullan, örn. PORT=3001 npm start\n');
+    process.exit(1);
+  }
+  throw err;
 });
 
 server.listen(PORT, () => {

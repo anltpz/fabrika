@@ -9,7 +9,7 @@ export interface InputState {
 }
 
 export type ClientMsg =
-  | { t: 'join'; name: string; token?: string; room?: string; create?: boolean }
+  | { t: 'join'; name: string; token?: string; room?: string; create?: boolean; botKey?: string }
   | { t: 'input'; input: InputState; angle: number; seq: number }
   | { t: 'chat'; text: string }
   | { t: 'build'; type: string; x: number; y: number; rot: number }
@@ -21,6 +21,9 @@ export type ClientMsg =
   | { t: 'bpPlace'; id: number; x: number; y: number; rot: number }
   | { t: 'bpDelete'; id: number }
   | { t: 'mapPing'; x: number; y: number }
+  | { t: 'botStart'; count: number; minutes: number }
+  | { t: 'botStop' }
+  | { t: 'setSpeed'; speed: number }
   | { t: 'trainSchedule'; id: number; stops: number[] }
   | { t: 'trainRemove'; id: number }
   | { t: 'stationMode'; id: number; mode: 'load' | 'unload' }
@@ -87,6 +90,9 @@ export type ServerMsg =
   | { t: 'fog'; cells: number[] }
   | { t: 'fluids'; nets: FluidNetInfo[] }
   | { t: 'trains'; list: TrainInfo[] }
+  | { t: 'speed'; speed: number }
+  | { t: 'botLog'; lines: BotLogLine[] }
+  | { t: 'botStatus'; status: BotStatus }
   | { t: 'terrain'; grass: number[] }
   | { t: 'loot'; opened: number[] }
   | { t: 'mapPing'; x: number; y: number; by: number; name: string; color: number }
@@ -94,3 +100,22 @@ export type ServerMsg =
   | { t: 'fx'; kind: 'hit' | 'swing' | 'death' | 'enemyDeath' | 'harvest' | 'build' | 'blast'; x: number; y: number; angle?: number; by?: number }
   | { t: 'toast'; msg: string; kind?: 'info' | 'warn' | 'good' }
   | { t: 'pong'; time: number };
+
+export interface BotLogLine {
+  /** Bot çalışmaya başladığından beri geçen saniye */
+  t: number;
+  who: string;
+  msg: string;
+  kind: 'info' | 'ok' | 'warn' | 'err';
+}
+
+export interface BotStatus {
+  running: boolean;
+  count: number;
+  minutes: number;
+  startedAt: number;
+  summary: string;
+  warn: boolean;
+  ok: number;
+  fail: number;
+}

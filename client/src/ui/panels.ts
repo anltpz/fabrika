@@ -31,7 +31,7 @@ import type { GameState } from '../state';
 import { drawMinimapBase } from '../render/terrain';
 import { chip, costChips, flowChips, fmt, h, hex, icon } from './dom';
 
-type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats' | 'blueprints' | 'map' | 'train';
+type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats' | 'blueprints' | 'map' | 'train' | 'bots';
 
 const STATUS_DOT: Record<string, string> = {
   working: '#5ad65a', idle: '#9aa0a6', nopower: '#e04848', tripped: '#ff3030', full: '#e8c040', nofuel: '#e07a30', norecipe: '#6a9ae8', noinput: '#e8c040', unpaired: '#e04848',
@@ -57,6 +57,9 @@ export class Panels {
     state.on('blueprints', () => { if (this.kind === 'blueprints') rerender(); });
     state.on('markers', () => { if (this.kind === 'map') rerender(); });
     state.on('trains', () => { if (this.kind === 'train') rerender(); });
+    state.on('bots', () => { if (this.kind === 'bots') this.updateBotLog(); });
+    state.on('speed', () => { if (this.kind === 'bots') rerender(); });
+    state.on('players', () => { if (this.kind === 'bots') rerender(); });
     state.on('trees', () => { this.mapBase = null; });
     state.on('fog', () => { if (this.kind === 'map') this.drawBigMap(); });
     state.on('buildings', (up: BuildingState[], rem: number[]) => {
@@ -120,6 +123,7 @@ export class Panels {
     else if (this.kind === 'blueprints') el = this.renderBlueprints();
     else if (this.kind === 'map') el = this.renderMap();
     else if (this.kind === 'train') el = this.renderTrain();
+    else if (this.kind === 'bots') el = this.renderBots();
     if (!el) { this.close(); return; }
     this.wrap?.remove();
     this.wrap = el;
@@ -257,6 +261,73 @@ export class Panels {
       body.append(el);
     });
     return this.shell('HUB · Kademeler', body);
+  }
+
+  // ------------------------------------------------------------ test botları
+
+  private botLogEl: HTMLElement | null = null;
+  private botHeadEl: HTMLElement | null = null;
+  private botCount = 2;
+  private botMinutes = 10;
+
+  private renderBots(): HTMLElement {
+    const st = this.state.botStatus;
+    const online = [...this.state.players.values()].filter((p) => p.online).length;
+    const free = Math.max(0, 4 - online);
+    const body = h('div');
+    // Hız
+    body.append(h('div', { class: 'section-title' }, 'Oyun Hızı'),
+      h('div', { class: 'filter-row' }, ...[1, 2, 3, 4].map((n) => h('button', { class: this.state.speed === n ? '' : 'ghost', onclick: () => this.send({ t: 'setSpeed', speed: n }) }, `${n}x`)),
+        h('span', { class: 'muted', style: { fontSize: '12px' } }, 'Tüm odayı etkiler: makineler, bantlar, hareket, trenler.')));
+    // Bot kontrolü
+    body.append(h('div', { class: 'section-title' }, 'Test Botları'));
+    if (st.running) {
+      body.append(h('div', { class: 'filter-row' },
+        h('span', { class: 'status-pill' }, h('span', { class: 'dot', style: { background: '#5ad65a' } }), `${st.count} bot çalışıyor${st.minutes ? ` · ${st.minutes} dk` : ' · süresiz'}`),
+        h('button', { onclick: () => this.send({ t: 'botStop' }) }, '■ Botları Durdur')));
+    } else {
+      const cnt = h('select', {}) as HTMLSelectElement;
+      for (let i = 1; i <= Math.max(1, free); i++) cnt.append(h('option', { value: String(i) }, `${i} bot`));
+      cnt.value = String(Math.min(this.botCount, Math.max(1, free)));
+      cnt.addEventListener('change', () => { this.botCount = Number(cnt.value); });
+      const dur = h('select', {}) as HTMLSelectElement;
+      for (const [v, l] of [[5, '5 dakika'], [10, '10 dakika'], [20, '20 dakika'], [60, '1 saat'], [0, 'Süresiz']] as const) dur.append(h('option', { value: String(v) }, l));
+      dur.value = String(this.botMinutes);
+      dur.addEventListener('change', () => { this.botMinutes = Number(dur.value); });
+      body.append(h('div', { class: 'filter-row' }, cnt, dur,
+        h('button', { disabled: free <= 0 ? 'true' : undefined, onclick: () => this.send({ t: 'botStart', count: Number(cnt.value), minutes: Number(dur.value) }) }, '▶ Botları Çağır')));
+      body.append(h('p', { class: 'muted', style: { fontSize: '12px' } },
+        free <= 0 ? 'Oda dolu: botlar oyuncu yeri kaplar (en fazla 4).' :
+        'Botlar tüm kademeleri takım için açar, kendi hileleriyle bedava inşa eder ve maden/üretim/plan/sıvı/tren hatları kurarak sunucuyu zorlar. Sohbetten de çağırabilirsin: /bot 2 10, /bot dur, /hiz 2'));
+    }
+    this.botHeadEl = h('div', { class: 'bot-summary' + (st.warn ? ' bad' : '') }, st.summary || (st.ok || st.fail ? `Son çalışma: ✔${st.ok} ✘${st.fail} modül` : 'Henüz bot çalışmadı.'));
+    body.append(this.botHeadEl);
+    this.botLogEl = h('div', { class: 'bot-log' });
+    body.append(this.botLogEl);
+    queueMicrotask(() => this.fillBotLog());
+    return this.shell('Botlar ve Hız', body);
+  }
+
+  private fillBotLog() {
+    const el = this.botLogEl;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30 || !el.children.length;
+    el.replaceChildren(...this.state.botLog.map((l) => {
+      const mm = String(Math.floor(l.t / 60)).padStart(2, '0'), ss = String(l.t % 60).padStart(2, '0');
+      return h('div', { class: `bl ${l.kind}` }, h('span', { class: 'muted' }, `${mm}:${ss} `), h('b', {}, l.who + ' '), l.msg);
+    }));
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }
+
+  private updateBotLog() {
+    if (!this.botLogEl || !this.botHeadEl) { this.scheduleRender(); return; }
+    const st = this.state.botStatus;
+    const runningChanged = (this.botHeadEl.dataset.running ?? '') !== String(st.running);
+    if (runningChanged && this.botHeadEl.dataset.running !== undefined) { this.scheduleRender(); return; }
+    this.botHeadEl.dataset.running = String(st.running);
+    this.botHeadEl.textContent = st.summary || this.botHeadEl.textContent;
+    this.botHeadEl.classList.toggle('bad', st.warn);
+    this.fillBotLog();
   }
 
   // ------------------------------------------------------------ büyük harita

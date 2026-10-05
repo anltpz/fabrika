@@ -22,6 +22,8 @@ import {
   worldPorts,
 } from '@fabrika/shared';
 import type {
+  BotLogLine,
+  BotStatus,
   BeltItem,
   Blueprint,
   FluidNetInfo,
@@ -101,6 +103,8 @@ export class GameState extends Emitter {
   stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
   lastAck = 0;
   speed = 1;
+  botStatus: BotStatus = { running: false, count: 0, minutes: 0, startedAt: 0, summary: '', warn: false, ok: 0, fail: 0 };
+  botLog: BotLogLine[] = [];
 
   load(snap: Snapshot) {
     this.room = snap.room;
@@ -223,6 +227,9 @@ export class GameState extends Emitter {
         break;
       }
       case 'players': {
+        // Listede olmayan oyuncular (ör. ayrılan test botları) kaldırılır
+        const ids = new Set(msg.players.map((p) => p.id));
+        for (const id of [...this.players.keys()]) if (!ids.has(id)) this.players.delete(id);
         for (const p of msg.players) {
           const ex = this.players.get(p.id);
           if (ex) Object.assign(ex, { name: p.name, color: p.color, online: p.online, hp: p.hp });
@@ -254,6 +261,19 @@ export class GameState extends Emitter {
       case 'power':
         this.power = msg.nets;
         this.emit('power');
+        break;
+      case 'speed':
+        this.speed = msg.speed;
+        this.emit('speed');
+        break;
+      case 'botStatus':
+        this.botStatus = msg.status;
+        this.emit('bots');
+        break;
+      case 'botLog':
+        this.botLog.push(...msg.lines);
+        if (this.botLog.length > 300) this.botLog.splice(0, this.botLog.length - 300);
+        this.emit('bots');
         break;
       case 'trains':
         this.trains = new Map(msg.list.map((t) => [t.id, t]));
