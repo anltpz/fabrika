@@ -109,7 +109,7 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Fabrika sunucusu http://localhost:${PORT} adresinde çalışıyor${CHEATS ? ' (hileler açık)' : ''}${GAME_SPEED !== 1 ? ` (oyun hızı ${GAME_SPEED}x)` : ''}`);
+  console.log(`Fabrika sunucusu http://localhost:${PORT} adresinde çalışıyor${CHEATS ? ' (hileler açık)' : ''}${process.env.TYPESAFE_API_KEY ? ' (botlar: Jev)' : ''}${GAME_SPEED !== 1 ? ` (oyun hızı ${GAME_SPEED}x)` : ''}`);
 });
 
 const shutdown = () => {

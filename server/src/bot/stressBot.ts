@@ -15,7 +15,8 @@ import {
   generateMap,
   tileKey,
 } from '@fabrika/shared';
-import type { BuildingState, ClientMsg, GameMap, ServerMsg, Slot } from '@fabrika/shared';
+import type { BuildingState, ClientMsg, GameMap, PowerNetInfo, ServerMsg, Slot } from '@fabrika/shared';
+import { Brain, TASK_IDS, TASK_NAMES, TaskId } from './brain';
 
 export type LogKind = 'info' | 'ok' | 'warn' | 'err';
 
@@ -49,6 +50,7 @@ export class BotRun {
   private timer?: NodeJS.Timeout;
   private last = { ticks: 0, bytes: 0, at: Date.now() };
   readonly startedAt = Date.now();
+  readonly brain = new Brain();
 
   constructor(readonly opts: BotRunOptions) {
     const reserved: BotContext['reserved'] = [];
@@ -92,30 +94,53 @@ export class BotRun {
   }
 
   private async loop(bot: Bot, deadline: number) {
-    const modules: Array<[string, () => Promise<string>]> = [
-      ['maden hattı', () => bot.miningLine()],
-      ['üretim hücresi', () => bot.productionCell()],
-      ['plan stresi', () => bot.blueprintStress()],
-      ['sıvı hattı', () => bot.fluidLine()],
-      ['tren hattı', () => bot.trainLine()],
-      ['etkileşim', () => bot.noise()],
-      ['çalkalama', () => bot.churn()],
-    ];
-    let i = 0;
+    const run: Record<TaskId, () => Promise<string>> = {
+      maden_hatti: () => bot.miningLine(),
+      uretim_hucresi: () => bot.productionCell(),
+      plan_stresi: () => bot.blueprintStress(),
+      sivi_hatti: () => bot.fluidLine(),
+      tren_hatti: () => bot.trainLine(),
+      enerji_onarimi: () => bot.repairPower(),
+      etkilesim: () => bot.noise(),
+      calkalama: () => bot.churn(),
+    };
+    let rr = 0;
     while (!this.stopped && !bot.closed && Date.now() < deadline) {
-      const [name, fn] = modules[i % modules.length];
-      i++;
+      // Kod kuralları: imkânsız veya art arda başarısız görevleri seçeneklerden çıkar
+      const problems = bot.powerProblems();
+      const allowed = TASK_IDS.filter((id) => {
+        if (id === 'plan_stresi' && !bot.blueprints.length) return false;
+        if (id === 'calkalama' && !bot.mine.size) return false;
+        if (id === 'enerji_onarimi' && !problems.total) return false;
+        const recent = bot.history.filter((h) => h.task === id).slice(-2);
+        return !(recent.length === 2 && recent.every((h) => !h.ok));
+      });
+      const roundRobin = TASK_IDS.filter((id) => allowed.includes(id) && id !== 'enerji_onarimi');
+      const fallback: TaskId = problems.total ? 'enerji_onarimi' : roundRobin[rr++ % Math.max(1, roundRobin.length)] ?? 'etkilesim';
+      const d = await this.brain.decide(bot.gameState(), allowed, fallback);
+      if (this.stopped) break;
+      const name = TASK_NAMES[d.task];
+      if (d.source === 'jev') {
+        bot.log(`🧠 Jev → ${name} (olasılık %${Math.round((d.probability ?? 0) * 100)}, güven ${(d.confidence ?? 0).toFixed(2)}, ${d.ms} ms)`, 'info');
+      } else if (d.lowConfidence) {
+        bot.log(`🧠 Jev emin değil (güven ${(d.confidence ?? 0).toFixed(2)}) → kural: ${name}`, 'warn');
+      } else if (d.error) {
+        bot.log(`🧠 Jev'e ulaşılamadı (${d.error}) → kural: ${name}`, 'warn');
+      }
       const start = Date.now();
       try {
-        const res = await Promise.race([fn(), wait(90000).then(() => { throw new Error('zaman aşımı'); })]);
+        const res = await Promise.race([run[d.task](), wait(90000).then(() => { throw new Error('zaman aşımı'); })]);
         if (this.stopped) break;
         this.ctx.totals.modulesOk++;
+        bot.history.push({ task: d.task, ok: true, msg: res });
         bot.log(`✔ ${name}: ${res} (${((Date.now() - start) / 1000).toFixed(1)} sn)`, 'ok');
       } catch (e) {
         if (this.stopped) break;
         this.ctx.totals.modulesFail++;
+        bot.history.push({ task: d.task, ok: false, msg: (e as Error).message });
         bot.log(`✘ ${name}: ${(e as Error).message}`, 'err');
       }
+      if (bot.history.length > 30) bot.history.shift();
     }
   }
 
@@ -131,7 +156,7 @@ export class BotRun {
     const belts = all.filter((x) => x.type.startsWith('belt')).length;
     const warn = tps < expected * 0.85 || b.maxTickGap > (1000 / expected) * 6;
     const t = this.ctx.totals;
-    const line = `📊 ${all.length} yapı (${belts} bant) · ${b.trains} tren · tick ${tps.toFixed(1)}/${expected}/sn · en uzun boşluk ${b.maxTickGap} ms · ${kbs.toFixed(1)} KB/sn · ping ${rtt} ms · modül ✔${t.modulesOk} ✘${t.modulesFail}`;
+    const line = `📊 ${all.length} yapı (${belts} bant) · ${b.trains} tren · tick ${tps.toFixed(1)}/${expected}/sn · en uzun boşluk ${b.maxTickGap} ms · ${kbs.toFixed(1)} KB/sn · ping ${rtt} ms · modül ✔${t.modulesOk} ✘${t.modulesFail} · ${this.brain.stats()}`;
     b.maxTickGap = 0;
     this.last = { ticks: b.ticks, bytes: b.bytes, at: now };
     return { line, warn };
@@ -169,6 +194,10 @@ export class Bot {
   techDone = 0;
   trains = 0;
   blueprints: Array<{ id: number; name: string; w: number; h: number }> = [];
+  power: PowerNetInfo[] = [];
+  stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
+  history: Array<{ task: TaskId; ok: boolean; msg: string }> = [];
+  readonly born = Date.now();
   mine = new Set<number>();
   private queue: string[] = [];
   private pump?: NodeJS.Timeout;
@@ -278,6 +307,8 @@ export class Bot {
       case 'inv': this.inv = msg.inventory; break;
       case 'tech': this.techDone = msg.tech.completed; break;
       case 'trains': this.trains = msg.list.length; break;
+      case 'power': this.power = msg.nets; break;
+      case 'stats': this.stats = { produced: msg.produced, consumed: msg.consumed }; break;
       case 'blueprints': this.blueprints = msg.list.map((b) => ({ id: b.id, name: b.name, w: b.w, h: b.h })); break;
       case 'trees': for (const k of msg.removed) this.map.trees[Math.floor(k / 4096) * this.map.size + (k % 4096)] = 0; break;
       case 'terrain': for (const k of msg.grass) this.map.terrain[Math.floor(k / 4096) * this.map.size + (k % 4096)] = Terrain.Grass; break;
@@ -647,6 +678,117 @@ export class Bot {
     }
     await this.flush();
     return done.join(', ');
+  }
+
+  /** Elektrik sorunları (kodla sayılır) */
+  powerProblems() {
+    let noFuel = 0, tripped = 0, noPower = 0;
+    for (const b of this.buildings.values()) {
+      if (b.type === 'biomass_burner' && (b.status === 'nofuel' || (!b.inBuf.biomass && !(b.fuel ?? 0)))) noFuel++;
+      if (b.type === 'power_pole' && b.tripped) tripped++;
+      // Hiçbir ağa bağlı olmayan enerjisiz makine (ağdaki enerjisizlik yakıt/sigorta ile çözülür)
+      if (b.status === 'nopower' && b.net === undefined) noPower++;
+    }
+    return { noFuel, tripped, noPower, total: noFuel + tripped + noPower };
+  }
+
+  /** Jev'e verilen oyun durumu: gözlenen gerçekler, kod tarafından sayılır */
+  gameState(): Record<string, unknown> {
+    const all = [...this.buildings.values()];
+    const count = (t: string) => all.filter((b) => b.type === t).length;
+    const status: Record<string, number> = {};
+    for (const b of all) if (b.status && b.status !== 'working' && b.status !== 'idle' && (BUILDINGS[b.type].crafter || BUILDINGS[b.type].mineRate || BUILDINGS[b.type].powerGen)) status[b.status] = (status[b.status] ?? 0) + 1;
+    const p = this.powerProblems();
+    const cap = this.power.reduce((s, n) => s + n.capacity, 0);
+    const use = this.power.reduce((s, n) => s + n.consumption, 0);
+    const deficits = Object.keys({ ...this.stats.produced, ...this.stats.consumed })
+      .map((k) => ({ esya: k, net_dk: Math.round(((this.stats.produced[k] ?? 0) - (this.stats.consumed[k] ?? 0)) * 10) / 10 }))
+      .filter((d) => d.net_dk < 0)
+      .sort((a, b) => a.net_dk - b.net_dk)
+      .slice(0, 5);
+    const lastOf = (t: TaskId) => { const i = this.history.map((h) => h.task).lastIndexOf(t); return i < 0 ? 'hiç yapılmadı' : `${this.history.length - i} görev önce`; };
+    return {
+      fabrika: {
+        toplam_yapi: all.length,
+        maden_cikarici: count('miner_mk1') + count('miner_mk2'),
+        uretim_hucresi: count('smart_splitter'),
+        kayitli_plan: this.blueprints.length,
+        petrol_kuyusu: count('oil_extractor'),
+        tren_istasyonu: count('train_station'),
+        tren: this.trains,
+        botun_kurdugu_yapi: this.mine.size,
+      },
+      sorunlar: {
+        sigortasi_atmis_direk: p.tripped,
+        yakiti_bitmis_jenerator: p.noFuel,
+        enerjisiz_makine: p.noPower,
+        makine_durumlari: status,
+      },
+      elektrik: { kapasite_mw: cap, tuketim_mw: use, ag_sayisi: this.power.length },
+      uretim_acigi: deficits,
+      son_gorevler: this.history.slice(-6).map((h) => ({ gorev: TASK_NAMES[h.task], sonuc: h.ok ? 'başarılı' : 'başarısız', not: h.msg.slice(0, 80) })),
+      gorev_gecmisi: Object.fromEntries(TASK_IDS.map((t) => [TASK_NAMES[t], lastOf(t)])),
+      calisma_suresi_dk: Math.round((Date.now() - this.born) / 6000) / 10,
+    };
+  }
+
+  /** Enerji onarımı: yakıt ikmali, sigortası atan ağlara jeneratör ve sıfırlama */
+  async repairPower(): Promise<string> {
+    let fueled = 0, added = 0, reset = 0;
+    const burners = [...this.buildings.values()].filter((b) => b.type === 'biomass_burner' && (b.status === 'nofuel' || (!b.inBuf.biomass && !(b.fuel ?? 0))));
+    for (const g of burners.slice(0, 6)) {
+      await this.tp(g.x + 1, g.y + 2.6);
+      await this.put(g, 'biomass', 50);
+      fueled++;
+    }
+    const trippedPoles = [...this.buildings.values()].filter((b) => b.type === 'power_pole' && b.tripped);
+    const nets = new Map<number | undefined, BuildingState>();
+    for (const pole of trippedPoles) if (!nets.has(pole.net)) nets.set(pole.net, pole);
+    for (const pole of [...nets.values()].slice(0, 3)) {
+      // Direğin yakınına iki biyokütle jeneratörü
+      for (let k = 0; k < 2; k++) {
+        let spot: [number, number] | null = null;
+        for (let r = 1; r <= 4 && !spot; r++) for (let dy = -r; dy <= r && !spot; dy++) for (let dx = -r; dx <= r && !spot; dx++) {
+          if (this.rectFree({ x: pole.x + dx, y: pole.y + dy, w: 2, h: 2 })) spot = [pole.x + dx, pole.y + dy];
+        }
+        if (!spot) break;
+        await this.clear({ x: spot[0], y: spot[1], w: 2, h: 2 });
+        await this.tp(spot[0] + 1, spot[1] + 2.6);
+        const g = await this.build('biomass_burner', spot[0], spot[1]);
+        if (g) { await this.put(g, 'biomass', 50); added++; }
+      }
+      this.send({ t: 'resetFuse', id: pole.id });
+      reset++;
+    }
+    // Ağa bağlı olmayan makinelere direk + jeneratör
+    let connected = 0;
+    const lonely = [...this.buildings.values()].filter((b) => b.status === 'nopower' && b.net === undefined);
+    for (const m of lonely.slice(0, 3)) {
+      if (m.net !== undefined) continue;
+      const [w, h] = footprintSize(BUILDINGS[m.type].w, BUILDINGS[m.type].h, m.rot);
+      let pole: [number, number] | null = null;
+      for (let r = 1; r <= 3 && !pole; r++) for (let dy = -r; dy <= h - 1 + r && !pole; dy++) for (let dx = -r; dx <= w - 1 + r && !pole; dx++) {
+        if (this.tileFree(m.x + dx, m.y + dy) && !this.map.trees[(m.y + dy) * this.map.size + m.x + dx]) pole = [m.x + dx, m.y + dy];
+      }
+      if (!pole) continue;
+      let gen: [number, number] | null = null;
+      for (let r = 1; r <= 4 && !gen; r++) for (let dy = -r; dy <= r && !gen; dy++) for (let dx = -r; dx <= r && !gen; dx++) {
+        const rect = { x: pole[0] + dx, y: pole[1] + dy, w: 2, h: 2 };
+        if (!(rect.x <= pole[0] && pole[0] < rect.x + 2 && rect.y <= pole[1] && pole[1] < rect.y + 2) && this.rectFree(rect)) gen = [rect.x, rect.y];
+      }
+      await this.tp(pole[0] + 0.5, pole[1] + 2.5);
+      if (!(await this.build('power_pole', pole[0], pole[1]))) continue;
+      if (gen) {
+        await this.clear({ x: gen[0], y: gen[1], w: 2, h: 2 });
+        await this.tp(gen[0] + 1, gen[1] + 2.6);
+        const g = await this.build('biomass_burner', gen[0], gen[1]);
+        if (g) { await this.put(g, 'biomass', 50); added++; }
+      }
+      connected++;
+    }
+    await this.flush();
+    if (!fueled && !added && !reset && !connected) return 'onarılacak elektrik sorunu yok';
+    return `${fueled} jeneratöre yakıt, ${added} yeni jeneratör, ${reset} sigorta sıfırlandı, ${connected} makine ağa bağlandı`;
   }
 
   async churn(): Promise<string> {

@@ -7,6 +7,7 @@ services:
       - fabrika-saves:/data
     environment:
       - CHEATS=0
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
     restart: unless-stopped
 
 volumes:

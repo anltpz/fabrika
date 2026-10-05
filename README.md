@@ -136,6 +136,23 @@ plan kopyaları, petrol/su hatları ve tren hatları kurar; işaret, ping, kargo
 Paneldeki canlı günlükte her adım ve 5 saniyede bir özet görünür: yapı/bant/tren sayısı, sunucu tick hızı (beklenen `20 × hız`),
 en uzun tick boşluğu, veri hızı (KB/sn), ping ve başarılı/başarısız modül sayısı. Bitince sohbete rapor düşer.
 
+#### Jev ile karar veren botlar (TypeSafe)
+
+Botlar sıradaki görevi [TypeSafe](https://typesafe.ai)'in **Jev** modeline sorabilir. Kod, oyun durumunu
+(yapı sayıları, elektrik sorunları, üretim açıkları, son görevlerin sonuçları) özetler; Jev seçilebilir görevler arasından
+birini olasılık ve güvenle seçer. Art arda başarısız olan veya o an imkânsız görevleri kod seçeneklerden çıkarır;
+Jev'in güveni düşükse ya da servise ulaşılamazsa kural tabanlı seçime döner. Paneldeki günlükte her karar
+`🧠 Jev → enerji onarımı (olasılık %72, güven 0.65, 150 ms)` şeklinde görünür.
+
+Etkinleştirmek için proje klasöründe `.env` dosyası oluştur (`.env.example`'ı kopyala) ve anahtarını yaz:
+
+```
+TYPESAFE_API_KEY=apikey_...
+```
+
+`npm start` bu dosyayı otomatik okur ve açılışta `(botlar: Jev)` yazar. `.env` git'e eklenmez; anahtarı kimseyle paylaşma.
+Anahtar yoksa botlar kural tabanlı çalışmaya devam eder.
+
 Terminalden çalıştırmak istersen (sunucu `CHEATS=1` ile açık olmalı):
 
 ```bash
