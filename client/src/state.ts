@@ -100,9 +100,11 @@ export class GameState extends Emitter {
   pings: Array<{ x: number; y: number; color: number; name: string; t0: number }> = [];
   stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
   lastAck = 0;
+  speed = 1;
 
   load(snap: Snapshot) {
     this.room = snap.room;
+    this.speed = snap.speed ?? 1;
     this.you = snap.you;
     this.token = snap.token;
     this.map = generateMap(snap.seed);
@@ -382,7 +384,7 @@ export class GameState extends Emitter {
     const bs = this.buildings.get(id);
     if (!b || !bs || !b.items.length) return [];
     const speed = BUILDINGS[bs.type].beltSpeed ?? 1;
-    const adv = Math.min(0.15, (now - b.at) / 1000) * speed;
+    const adv = Math.min(0.15, (now - b.at) / 1000) * speed * this.speed;
     const out: BeltItem[] = [];
     let limit = 1;
     for (const it of b.items) {

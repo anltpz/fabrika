@@ -66,6 +66,7 @@ export class Hud {
     this.root.append(top, mm, keys, this.hp, this.banner, this.hotbar, this.toasts, this.chatWrap, this.tooltip);
     parent.append(this.root);
     (roomCode as HTMLElement).textContent = state.room;
+    if (state.speed !== 1) this.ping.before(h('span', { class: 'badge cur', title: 'Oyun hızı' }, `${state.speed}x`));
 
     state.on('players', () => this.renderPlayers());
     state.on('players:tick', () => this.renderPlayersHp());

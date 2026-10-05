@@ -13,6 +13,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = resolve(process.env.STATIC_DIR ?? join(here, '../../client/dist'));
 const SAVE_FILE = process.env.SAVE_FILE ?? resolve(here, '../../saves/fabrika.db');
 const CHEATS = process.env.CHEATS === '1';
+const GAME_SPEED = Math.max(1, Math.min(4, Number(process.env.GAME_SPEED ?? 1) || 1));
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -26,7 +27,7 @@ const MIME: Record<string, string> = {
 };
 
 const persistence = new Persistence(SAVE_FILE);
-const manager = new RoomManager(persistence, CHEATS);
+const manager = new RoomManager(persistence, CHEATS, GAME_SPEED);
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -92,7 +93,7 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Fabrika sunucusu http://localhost:${PORT} adresinde çalışıyor${CHEATS ? ' (hileler açık)' : ''}`);
+  console.log(`Fabrika sunucusu http://localhost:${PORT} adresinde çalışıyor${CHEATS ? ' (hileler açık)' : ''}${GAME_SPEED !== 1 ? ` (oyun hızı ${GAME_SPEED}x)` : ''}`);
 });
 
 const shutdown = () => {

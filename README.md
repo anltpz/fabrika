@@ -123,5 +123,21 @@ npm test          # simülasyon testleri (Vitest)
 npm run typecheck
 ```
 
+### Stres test botu
+
+Sunucuyu hileler açık ve istersen hızlandırılmış başlat (`GAME_SPEED` 1–4; tüm simülasyon o kadar hızlı akar):
+
+```bash
+CHEATS=1 GAME_SPEED=2 npm start          # Windows PowerShell: $env:CHEATS=1; $env:GAME_SPEED=2; npm start
+npm run stres -- --bot 2 --sure 10      # yeni dünya oluşturur ve oda kodunu yazar
+npm run stres -- ABCDE --bot 3          # var olan odaya katılır (tarayıcıdan izleyebilirsin)
+```
+
+Parametreler: `--bot` 1–4 bot, `--sure` dakika, `--url` sunucu adresi.
+Botlar tüm kademeleri açar ve döngü halinde maden hatları, akıllı ayırıcı/alt geçitli üretim hücreleri, plan kopyaları,
+petrol/su hatları ve tren hatları kurar; işaret, ping, sohbet, kargo, yuva saldırısı ve sök/yeniden kur ile sunucuyu zorlar.
+Konsola her adımı ve 5 saniyede bir özet yazar: yapı/bant/tren sayısı, sunucu tick hızı (beklenen `20 × GAME_SPEED`),
+en uzun tick boşluğu, gelen veri (KB/sn), ping ve başarılı/başarısız modül sayısı. Tick hızı düşerse ⚠ ile uyarır.
+
 Hile modu (geliştirme): `CHEATS=1 npm start` ile sohbette `/ver <eşya|hepsi> <adet>`, `/kademe`, `/tp <x> <y>` komutları açılır.
 Test botu: `npx tsx scripts/bot.ts <ODA_KODU>`

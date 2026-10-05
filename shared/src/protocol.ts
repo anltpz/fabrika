@@ -56,6 +56,8 @@ export interface Snapshot {
   lootOpened: number[];
   blasted: number[];
   trains: TrainInfo[];
+  /** Oyun hızı çarpanı */
+  speed?: number;
 }
 
 /** Tick içindeki oyuncu: [id, x, y, açı, hp] */

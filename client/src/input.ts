@@ -363,7 +363,7 @@ export class Controller {
     const me = this.state.me();
     if (me) {
       // İstemci tarafı tahmin
-      const [vx, vy] = inputVelocity(this.input, PLAYER_SPEED);
+      const [vx, vy] = inputVelocity(this.input, PLAYER_SPEED * this.state.speed);
       const moving = vx !== 0 || vy !== 0;
       if (moving) moveCircle(me, vx, vy, dt, this.state.isBlockedForWalk);
       const err = Math.hypot(me.tx - me.x, me.ty - me.y);

@@ -13,7 +13,7 @@ export class Room {
   private timer?: NodeJS.Timeout;
   private lastSave = Date.now();
 
-  constructor(code: string, world: World, private persistence: Persistence | undefined, cheats: boolean) {
+  constructor(code: string, world: World, private persistence: Persistence | undefined, cheats: boolean, readonly speed = 1) {
     this.code = code;
     this.world = world;
     this.world.cheats = cheats;
@@ -47,6 +47,7 @@ export class Room {
       lootOpened: [...this.world.lootOpened],
       blasted: [...this.world.blasted],
       trains: this.world.trainsInfo(),
+      speed: this.speed,
     };
     this.sendTo(p.id, { t: 'welcome', snap });
     this.broadcast({ t: 'players', players: this.world.playersPublic() });
@@ -102,7 +103,7 @@ export class Room {
 
   private start() {
     if (this.timer) return;
-    this.timer = setInterval(() => this.tick(), 1000 / TICK_RATE);
+    this.timer = setInterval(() => this.tick(), 1000 / (TICK_RATE * this.speed));
   }
 
   private stop() {
