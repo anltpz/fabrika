@@ -36,3 +36,6 @@ export const NEST_MAX_ENEMIES = 3;
 export const NEST_SPAWN_INTERVAL = 20;
 
 export const PLAYER_COLORS = [0xf2a33a, 0x4fb3ff, 0x7ad65c, 0xe05cc8];
+
+export const FOG_CELL = 8;
+export const FOG_REVEAL_RADIUS = 26;

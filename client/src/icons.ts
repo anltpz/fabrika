@@ -17,7 +17,7 @@ function shade(c: number, f: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
-type Shape = 'ore' | 'ingot' | 'plate' | 'rod' | 'screw' | 'coil' | 'cable' | 'block' | 'leaf' | 'log' | 'pellet' | 'gear' | 'frame' | 'beam' | 'pipe' | 'motor';
+type Shape = 'ore' | 'ingot' | 'plate' | 'rod' | 'screw' | 'coil' | 'cable' | 'block' | 'leaf' | 'log' | 'pellet' | 'gear' | 'frame' | 'beam' | 'pipe' | 'motor' | 'crystal' | 'board' | 'drop' | 'dynamite' | 'computer';
 
 const SHAPES: Record<string, Shape> = {
   ore_iron: 'ore', ore_copper: 'ore', limestone: 'ore', coal: 'ore',
@@ -25,6 +25,9 @@ const SHAPES: Record<string, Shape> = {
   iron_ingot: 'ingot', copper_ingot: 'ingot', steel_ingot: 'ingot',
   iron_plate: 'plate', reinforced_plate: 'plate', iron_rod: 'rod', screw: 'screw', wire: 'coil', cable: 'cable',
   concrete: 'block', rotor: 'gear', stator: 'coil', modular_frame: 'frame', steel_beam: 'beam', steel_pipe: 'pipe', motor: 'motor',
+  sulfur: 'ore', quartz: 'ore', bauxite: 'ore', black_powder: 'pellet', explosive: 'dynamite', quartz_crystal: 'crystal', silica: 'pellet',
+  aluminum_ingot: 'ingot', aluminum_sheet: 'plate', plastic: 'block', rubber: 'block', circuit_board: 'board', computer: 'computer',
+  water: 'drop', crude_oil: 'drop', fuel: 'drop',
 };
 
 function draw(id: string): string {
@@ -112,6 +115,30 @@ function draw(id: string): string {
       g.fillRect(14, 20, 32, 26); g.strokeRect(14, 20, 32, 26);
       g.fillStyle = shade(col, 0.8); g.fillRect(46, 28, 8, 10);
       g.strokeStyle = light; for (let x = 19; x < 44; x += 6) { g.beginPath(); g.moveTo(x, 22); g.lineTo(x, 44); g.stroke(); }
+      break;
+    case 'crystal':
+      poly([[32, 8], [44, 26], [38, 54], [26, 54], [20, 26]]);
+      g.fillStyle = light; poly([[32, 8], [44, 26], [32, 30]]);
+      break;
+    case 'board':
+      g.fillRect(10, 16, 44, 32); g.strokeRect(10, 16, 44, 32);
+      g.strokeStyle = '#e8c060'; g.lineWidth = 2;
+      for (const y of [24, 32, 40]) { g.beginPath(); g.moveTo(14, y); g.lineTo(30, y); g.lineTo(36, y - 4); g.lineTo(50, y - 4); g.stroke(); }
+      g.fillStyle = '#222'; g.fillRect(36, 30, 10, 10);
+      break;
+    case 'drop':
+      g.beginPath(); g.moveTo(32, 8); g.bezierCurveTo(48, 30, 50, 40, 46, 46); g.arc(32, 42, 14, 0.3, Math.PI - 0.3); g.bezierCurveTo(14, 40, 16, 30, 32, 8); g.closePath(); g.fill(); g.stroke();
+      g.fillStyle = light; g.beginPath(); g.ellipse(26, 38, 3, 6, 0.4, 0, 7); g.fill();
+      break;
+    case 'dynamite':
+      for (const x of [18, 28, 38]) { g.fillRect(x, 20, 9, 32); g.strokeRect(x, 20, 9, 32); }
+      g.strokeStyle = '#ddd'; g.lineWidth = 2; g.beginPath(); g.moveTo(32, 20); g.quadraticCurveTo(36, 10, 46, 10); g.stroke();
+      g.fillStyle = '#ffd040'; g.beginPath(); g.arc(47, 10, 3, 0, 7); g.fill();
+      break;
+    case 'computer':
+      g.fillRect(12, 14, 40, 28); g.strokeRect(12, 14, 40, 28);
+      g.fillStyle = '#7ad0ff'; g.fillRect(16, 18, 32, 20);
+      g.fillStyle = dark; g.fillRect(26, 42, 12, 6); g.fillRect(18, 48, 28, 4);
       break;
   }
   return c.toDataURL();

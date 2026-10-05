@@ -5,6 +5,8 @@ export interface ItemDef {
   stack: number;
   /** Yakıt enerjisi (MJ), yakıt değilse yok */
   energy?: number;
+  /** Sıvı mı (envantere ve bantlara girmez, borularla taşınır) */
+  fluid?: boolean;
 }
 
 const list: ItemDef[] = [
@@ -31,11 +33,31 @@ const list: ItemDef[] = [
   { id: 'steel_pipe', name: 'Çelik Boru', color: 0x6f8296, stack: 100 },
   { id: 'stator', name: 'Stator', color: 0xc0a050, stack: 100 },
   { id: 'motor', name: 'Motor', color: 0xc0583a, stack: 50 },
+  { id: 'sulfur', name: 'Kükürt', color: 0xe8d040, stack: 100 },
+  { id: 'quartz', name: 'Ham Kuvars', color: 0xe0b0d8, stack: 100 },
+  { id: 'bauxite', name: 'Boksit', color: 0xc06a50, stack: 100 },
+  { id: 'black_powder', name: 'Siyah Barut', color: 0x3a3a44, stack: 200 },
+  { id: 'explosive', name: 'Patlayıcı', color: 0xd04030, stack: 50 },
+  { id: 'quartz_crystal', name: 'Kuvars Kristali', color: 0xf0c8f0, stack: 200 },
+  { id: 'silica', name: 'Silika', color: 0xf4f0e8, stack: 200 },
+  { id: 'aluminum_ingot', name: 'Alüminyum Külçe', color: 0xd8e0e8, stack: 100 },
+  { id: 'aluminum_sheet', name: 'Alüminyum Levha', color: 0xe8f0f8, stack: 200 },
+  { id: 'plastic', name: 'Plastik', color: 0x4aa8e0, stack: 200 },
+  { id: 'rubber', name: 'Kauçuk', color: 0x2a2a2a, stack: 200 },
+  { id: 'circuit_board', name: 'Devre Kartı', color: 0x3a9a5a, stack: 100 },
+  { id: 'computer', name: 'Bilgisayar', color: 0x5a6a8a, stack: 50 },
+  { id: 'water', name: 'Su', color: 0x3a8ae0, stack: 0, fluid: true },
+  { id: 'crude_oil', name: 'Ham Petrol', color: 0x2a1e2e, stack: 0, fluid: true },
+  { id: 'fuel', name: 'Yakıt', color: 0xe0a020, stack: 0, fluid: true, energy: 750 },
 ];
 
 export const ITEMS: Record<string, ItemDef> = Object.fromEntries(list.map((i) => [i.id, i]));
 export const ITEM_IDS = list.map((i) => i.id);
 export const ITEM_INDEX: Record<string, number> = Object.fromEntries(list.map((i, n) => [i.id, n]));
+
+export function isFluid(id: string): boolean {
+  return !!ITEMS[id]?.fluid;
+}
 
 export function itemName(id: string): string {
   return ITEMS[id]?.name ?? id;

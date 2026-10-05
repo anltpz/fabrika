@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILDINGS, TICK_RATE, footprint, generateMap, hasTree, rotateBlueprint, terrainBuildable, tileKey } from '@fabrika/shared';
+import { BUILDINGS, LOOT_TABLES, TICK_RATE, Terrain, footprint, generateMap, hasTree, rotateBlueprint, terrainBuildable, tileKey } from '@fabrika/shared';
 import { World } from '../src/sim/world';
 import { computeNetworks } from '../src/sim/power';
 import { Persistence } from '../src/persistence';
@@ -327,6 +327,59 @@ describe('işaretler', () => {
     w.mapPing(p.id, 20, 20);
     w.mapPing(p.id, 21, 21);
     expect(w.out.filter((m) => m.t === 'mapPing').length).toBe(1);
+  });
+});
+
+describe('keşif', () => {
+  it('başlangıçta sadece merkez açık, oyuncu yürüdükçe sis açılır', () => {
+    const { w, p } = setup();
+    const before = w.exploredList().length;
+    expect(w.isExplored(w.map.spawn.x, w.map.spawn.y)).toBe(true);
+    expect(w.isExplored(10, 10)).toBe(false);
+    p.x = 20; p.y = 20;
+    run(w, 1);
+    expect(w.isExplored(20, 20)).toBe(true);
+    expect(w.exploredList().length).toBeGreaterThan(before);
+  });
+
+  it('kargo bir kez açılır ve ödül verir', () => {
+    const { w, p } = setup();
+    const l = w.map.loot[0];
+    p.x = l.x + 0.5; p.y = l.y + 1.5;
+    expect(w.canPlace('power_pole', l.x, l.y, 0)).toBe('Önce kargoyu aç');
+    w.harvest(p.id, l.x, l.y);
+    const [item, n] = Object.entries(LOOT_TABLES[l.tier])[0];
+    expect(w.count(p.id, item)).toBe(n);
+    p.harvestCd = 0;
+    w.harvest(p.id, l.x, l.y);
+    expect(w.count(p.id, item)).toBe(n);
+    expect(w.lootOpened.has(l.id)).toBe(true);
+  });
+
+  it('patlayıcı kayayı açar ve kayıttan sonra açık kalır', () => {
+    const { w, p } = setup();
+    let rx = -1, ry = -1;
+    outer: for (let y = 5; y < w.map.size - 5; y++) for (let x = 5; x < w.map.size - 5; x++) if (w.map.terrain[y * w.map.size + x] === Terrain.Rock) { rx = x; ry = y; break outer; }
+    expect(rx).toBeGreaterThan(0);
+    p.x = rx + 0.5; p.y = ry + 2;
+    w.harvest(p.id, rx, ry);
+    expect(w.map.terrain[ry * w.map.size + rx]).toBe(Terrain.Rock); // patlayıcı yok
+    p.inventory[0] = { item: 'explosive', count: 1 };
+    w.harvest(p.id, rx, ry);
+    expect(w.map.terrain[ry * w.map.size + rx]).toBe(Terrain.Grass);
+    expect(w.count(p.id, 'explosive')).toBe(0);
+    const w2 = World.fromSave(JSON.parse(JSON.stringify(w.serialize())));
+    expect(w2.map.terrain[ry * w2.map.size + rx]).toBe(Terrain.Grass);
+  });
+
+  it('petrol düğümüne maden çıkarıcı kurulamaz, elle toplanamaz', () => {
+    const { w, p } = setup();
+    const oil = w.map.nodes.find((n) => n.item === 'crude_oil')!;
+    expect(oil).toBeTruthy();
+    expect(w.canPlace('miner_mk1', oil.x, oil.y, 0)).toContain('petrol kuyusu');
+    p.x = oil.x + 0.5; p.y = oil.y + 1.5;
+    w.harvest(p.id, oil.x, oil.y);
+    expect(w.count(p.id, 'crude_oil')).toBe(0);
   });
 });
 

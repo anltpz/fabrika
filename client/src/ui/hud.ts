@@ -1,4 +1,4 @@
-import { BUILDINGS, MILESTONES, PLAYER_MAX_HP, itemName } from '@fabrika/shared';
+import { BUILDINGS, FOG_CELL, MILESTONES, PLAYER_MAX_HP, itemName } from '@fabrika/shared';
 import type { ServerMsg } from '@fabrika/shared';
 import { drawMinimapBase } from '../render/terrain';
 import type { GameState } from '../state';
@@ -221,8 +221,21 @@ export class Hud {
       const s = b.type.startsWith('belt') ? 1 : 2;
       g.fillRect((b.x - sx) * k, (b.y - sy) * k, s * k * 0.7, s * k * 0.7);
     }
+    // Sis
+    g.fillStyle = 'rgba(10,12,15,0.92)';
+    const cols = Math.ceil(S / FOG_CELL);
+    for (let cy = Math.floor(sy / FOG_CELL); cy <= Math.floor((sy + view) / FOG_CELL) && cy < cols; cy++) {
+      for (let cx = Math.floor(sx / FOG_CELL); cx <= Math.floor((sx + view) / FOG_CELL) && cx < cols; cx++) {
+        if (!this.state.explored[cy * cols + cx]) g.fillRect((cx * FOG_CELL - sx) * k, (cy * FOG_CELL - sy) * k, FOG_CELL * k + 1, FOG_CELL * k + 1);
+      }
+    }
+    for (const l of this.state.map.loot) {
+      if (this.state.lootOpened.has(l.id) || !this.state.isExplored(l.x, l.y)) continue;
+      g.fillStyle = '#ffc040';
+      g.fillRect((l.x - sx) * k - 2, (l.y - sy) * k - 2, 5, 5);
+    }
     for (const n of this.state.nests) {
-      if (!n.alive) continue;
+      if (!n.alive || !this.state.isExplored(n.x, n.y)) continue;
       g.fillStyle = '#c040a0';
       g.beginPath();
       g.arc((n.x - sx) * k, (n.y - sy) * k, 3, 0, 7);

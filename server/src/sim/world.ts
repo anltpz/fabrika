@@ -7,6 +7,12 @@ import {
   DX,
   DY,
   ENEMY_AGGRO_RANGE,
+  FOG_CELL,
+  FOG_REVEAL_RADIUS,
+  LOOT_TABLES,
+  Terrain,
+  fogIndex,
+  isFluid,
   ENEMY_ATTACK_COOLDOWN,
   ENEMY_ATTACK_RANGE,
   ENEMY_DAMAGE,
@@ -136,6 +142,9 @@ export interface SaveData {
   tech: TechState;
   blueprints?: Blueprint[];
   markers?: MapMarker[];
+  explored?: number[];
+  lootOpened?: number[];
+  blasted?: number[];
 }
 
 const MACHINE_OUT_CAP = 50;
@@ -174,6 +183,12 @@ export class World {
   stats = new ProductionStats();
   blueprints: Blueprint[] = [];
   markers: MapMarker[] = [];
+  explored: Uint8Array;
+  lootOpened = new Set<number>();
+  blasted = new Set<number>();
+  private fogPending: number[] = [];
+  private grassPending: number[] = [];
+  private lootDirty = false;
   private lastPing = new Map<number, number>();
 
   /** Güç ağları önbelleği */
@@ -199,7 +214,11 @@ export class World {
     this.seed = seed;
     this.map = generateMap(seed);
     this.nests = this.map.nests.map((n) => ({ id: n.id, x: n.x, y: n.y, hp: NEST_HP, alive: true, spawnT: 0 }));
+    const cols = Math.ceil(this.map.size / FOG_CELL);
+    this.explored = new Uint8Array(cols * cols);
     const s = this.map.spawn;
+    this.reveal(s.x, s.y, 34);
+    this.fogPending = [];
     this.addBuilding('hub', s.x - 2, s.y - 2, 0);
   }
 
@@ -238,6 +257,11 @@ export class World {
     w.tech = data.tech;
     w.blueprints = data.blueprints ?? [];
     w.markers = data.markers ?? [];
+    for (const i of data.explored ?? []) if (i >= 0 && i < w.explored.length) w.explored[i] = 1;
+    for (const id of data.lootOpened ?? []) w.lootOpened.add(id);
+    for (const k of data.blasted ?? []) w.blastTile(k % 4096, Math.floor(k / 4096));
+    w.fogPending = [];
+    w.grassPending = [];
     w.changed.clear();
     return w;
   }
@@ -255,6 +279,9 @@ export class World {
       tech: this.tech,
       blueprints: this.blueprints,
       markers: this.markers,
+      explored: this.exploredList(),
+      lootOpened: [...this.lootOpened],
+      blasted: [...this.blasted],
     };
   }
 
@@ -363,12 +390,14 @@ export class World {
       if (hasTree(this.map, tx, ty)) return 'Önce ağacı kes';
       const other = this.buildingAt(tx, ty);
       if (other && !(allowReplaceBelt && isBelt(other.type) && isBelt(type))) return 'Alan dolu';
-      if (this.map.nodeAt.has(tileKey(tx, ty))) {
-        if (!def.mineRate) return 'Kaynak düğümüne sadece maden çıkarıcı kurulabilir';
+      const node = this.map.nodeAt.get(tileKey(tx, ty));
+      if (node) {
+        if (isFluid(node.item) ? !def.pumpRate : !def.mineRate) return isFluid(node.item) ? 'Petrol düğümüne sadece petrol kuyusu kurulabilir' : 'Kaynak düğümüne sadece maden çıkarıcı kurulabilir';
         nodeCount++;
       }
+      if (this.lootAt(tx, ty)) return 'Önce kargoyu aç';
     }
-    if (def.mineRate && nodeCount === 0) return 'Maden çıkarıcı bir kaynak düğümünün üzerine kurulmalı';
+    if ((def.mineRate || def.pumpRate) && nodeCount === 0) return def.pumpRate ? 'Petrol kuyusu bir petrol düğümünün üzerine kurulmalı' : 'Maden çıkarıcı bir kaynak düğümünün üzerine kurulmalı';
     if (player) {
       const [w, h] = footprintSize(def.w, def.h, rot);
       if (Math.hypot(player.x - (x + w / 2), player.y - (y + h / 2)) > BUILD_RANGE) return 'Çok uzak';
@@ -678,8 +707,32 @@ export class World {
     x |= 0; y |= 0;
     if (p.harvestCd > 0) return;
     if (Math.hypot(p.x - (x + 0.5), p.y - (y + 0.5)) > INTERACT_RANGE) { this.toast(id, 'Çok uzak'); return; }
+    const loot = this.lootAt(x, y);
+    if (loot) {
+      this.lootOpened.add(loot.id);
+      this.lootDirty = true;
+      const table = LOOT_TABLES[loot.tier] ?? LOOT_TABLES[0];
+      this.giveOrDrop(p, Object.entries(table));
+      this.sysChat(`${p.name} düşmüş bir kargo buldu: ${Object.entries(table).map(([k, v]) => `${v} ${itemName(k)}`).join(', ')}`);
+      this.broadcast({ t: 'fx', kind: 'build', x, y, by: id });
+      return;
+    }
+    if (this.map.terrain[y * this.map.size + x] === Terrain.Rock) {
+      if (countItem(p.inventory, 'explosive') < 1) { this.toast(id, 'Kayayı açmak için Patlayıcı gerekir'); return; }
+      removeItem(p.inventory, 'explosive', 1);
+      p.dirtyInv = true;
+      p.harvestCd = HARVEST_COOLDOWN;
+      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+        const tx = x + i, ty = y + j;
+        if (tx < 1 || ty < 1 || tx >= this.map.size - 1 || ty >= this.map.size - 1) continue;
+        if (this.map.terrain[ty * this.map.size + tx] === Terrain.Rock) { this.blastTile(tx, ty); this.grassPending.push(tileKey(tx, ty)); }
+      }
+      this.broadcast({ t: 'fx', kind: 'blast', x: x + 0.5, y: y + 0.5, by: id });
+      return;
+    }
     const node = this.map.nodeAt.get(tileKey(x, y));
     if (node) {
+      if (isFluid(node.item)) { this.toast(id, 'Petrol elle toplanamaz, petrol kuyusu kur'); return; }
       if (this.buildingAt(x, y)) { this.toast(id, 'Bu düğümde maden çıkarıcı var'); return; }
       p.harvestCd = HARVEST_COOLDOWN;
       const n = node.purity === 'pure' ? 2 : 1;
@@ -765,6 +818,43 @@ export class World {
       this.toast(id, `${moved} parça teslim edildi`, 'good');
     }
     this.broadcast({ t: 'tech', tech: this.tech });
+  }
+
+  // ---------------------------------------------------------------- keşif
+
+  /** (x,y) çevresindeki sis hücrelerini açar */
+  reveal(x: number, y: number, r = FOG_REVEAL_RADIUS) {
+    const cols = Math.ceil(this.map.size / FOG_CELL);
+    const c0x = Math.max(0, Math.floor((x - r) / FOG_CELL)), c1x = Math.min(cols - 1, Math.floor((x + r) / FOG_CELL));
+    const c0y = Math.max(0, Math.floor((y - r) / FOG_CELL)), c1y = Math.min(cols - 1, Math.floor((y + r) / FOG_CELL));
+    for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
+      const i = cy * cols + cx;
+      if (this.explored[i]) continue;
+      const mx = (cx + 0.5) * FOG_CELL, my = (cy + 0.5) * FOG_CELL;
+      if (Math.hypot(mx - x, my - y) > r + FOG_CELL * 0.7) continue;
+      this.explored[i] = 1;
+      this.fogPending.push(i);
+    }
+  }
+
+  exploredList(): number[] {
+    const out: number[] = [];
+    this.explored.forEach((v, i) => { if (v) out.push(i); });
+    return out;
+  }
+
+  isExplored(x: number, y: number): boolean {
+    return !!this.explored[fogIndex(x, y, this.map.size, FOG_CELL)];
+  }
+
+  lootAt(x: number, y: number) {
+    return this.map.loot.find((l) => l.x === x && l.y === y && !this.lootOpened.has(l.id));
+  }
+
+  blastTile(x: number, y: number) {
+    if (x < 0 || y < 0 || x >= this.map.size || y >= this.map.size) return;
+    this.map.terrain[y * this.map.size + x] = Terrain.Grass;
+    this.blasted.add(tileKey(x, y));
   }
 
   // ---------------------------------------------------------------- harita işaretleri
@@ -926,7 +1016,7 @@ export class World {
       const item = args[0];
       const n = parseInt(args[1] ?? '100', 10) || 100;
       if (item === 'hepsi') {
-        for (const k of Object.keys(ITEMS)) addItem(p.inventory, k, 50);
+        for (const k of Object.keys(ITEMS)) if (!isFluid(k)) addItem(p.inventory, k, 50);
       } else if (ITEMS[item]) {
         addItem(p.inventory, item, n);
       }
@@ -974,6 +1064,7 @@ export class World {
       p.attackCd = Math.max(0, p.attackCd - DT);
       p.harvestCd = Math.max(0, p.harvestCd - DT);
       if (p.hp < PLAYER_MAX_HP && this.time - p.lastDamage > PLAYER_REGEN_DELAY) p.hp = Math.min(PLAYER_MAX_HP, p.hp + PLAYER_REGEN * DT);
+      if (this.tickCount % 10 === 0) this.reveal(p.x, p.y);
       this.updateCraft(p);
       if (p.dirtyInv) { p.dirtyInv = false; this.send(p.id, { t: 'inv', inventory: p.inventory }); }
       if (p.dirtyCraft) { p.dirtyCraft = false; this.send(p.id, { t: 'craft', queue: p.craftQueue }); }
@@ -1410,6 +1501,9 @@ export class World {
       this.out.push({ t: 'trees', removed: this.treesRemovedPending });
       this.treesRemovedPending = [];
     }
+    if (this.fogPending.length) { this.out.push({ t: 'fog', cells: this.fogPending }); this.fogPending = []; }
+    if (this.grassPending.length) { this.out.push({ t: 'terrain', grass: this.grassPending }); this.grassPending = []; }
+    if (this.lootDirty) { this.lootDirty = false; this.out.push({ t: 'loot', opened: [...this.lootOpened] }); }
     if (this.nestsDirty) {
       this.nestsDirty = false;
       this.out.push({ t: 'nests', nests: this.nestsState() });

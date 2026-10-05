@@ -43,6 +43,9 @@ export class Room {
       power: this.world.netInfo,
       blueprints: this.world.blueprints,
       markers: this.world.markers,
+      explored: this.world.exploredList(),
+      lootOpened: [...this.world.lootOpened],
+      blasted: [...this.world.blasted],
     };
     this.sendTo(p.id, { t: 'welcome', snap });
     this.broadcast({ t: 'players', players: this.world.playersPublic() });

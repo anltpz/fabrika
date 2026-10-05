@@ -1,6 +1,8 @@
 import {
   BUILDINGS,
   INTERACT_RANGE,
+  ITEMS,
+  Terrain,
   NEST_HP,
   PLAYER_SPEED,
   PURITY_NAMES,
@@ -262,7 +264,8 @@ export class Controller {
     }
     const [tx, ty] = this.mouseTile();
     const me = this.state.me();
-    if (me && (this.state.map.nodeAt.has(tileKey(tx, ty)) || hasTree(this.state.map, tx, ty)) && Math.hypot(me.x - tx - 0.5, me.y - ty - 0.5) <= INTERACT_RANGE) {
+    const rock = this.state.map.terrain[ty * this.state.map.size + tx] === Terrain.Rock;
+    if (me && (this.state.map.nodeAt.has(tileKey(tx, ty)) || hasTree(this.state.map, tx, ty) || this.state.lootAt(tx, ty) || rock) && Math.hypot(me.x - tx - 0.5, me.y - ty - 0.5) <= INTERACT_RANGE) {
       this.send({ t: 'harvest', x: tx, y: ty });
       this.lastHarvest = performance.now();
       return;
@@ -327,8 +330,12 @@ export class Controller {
     const me = this.state.me();
     if (!me) return null;
     const [tx, ty] = this.mouseTile();
-    const isTarget = (x: number, y: number) => (this.state.map.nodeAt.has(tileKey(x, y)) && !this.state.buildingAt(x, y)) || hasTree(this.state.map, x, y);
-    if (isTarget(tx, ty) && Math.hypot(me.x - tx - 0.5, me.y - ty - 0.5) <= INTERACT_RANGE) return [tx, ty];
+    const isTarget = (x: number, y: number) => {
+      const node = this.state.map.nodeAt.get(tileKey(x, y));
+      return (!!node && !ITEMS[node.item].fluid && !this.state.buildingAt(x, y)) || hasTree(this.state.map, x, y) || !!this.state.lootAt(x, y);
+    };
+    const isRock = this.state.map.terrain[ty * this.state.map.size + tx] === Terrain.Rock;
+    if ((isTarget(tx, ty) || isRock) && Math.hypot(me.x - tx - 0.5, me.y - ty - 0.5) <= INTERACT_RANGE) return [tx, ty];
     let best: [number, number] | null = null;
     let bd = INTERACT_RANGE;
     const px = Math.floor(me.x), py = Math.floor(me.y);
@@ -447,10 +454,23 @@ export class Controller {
     } else {
       const node = this.state.map.nodeAt.get(tileKey(tx, ty));
       const nest = this.state.nests.find((n) => n.alive && Math.abs(n.x - tx) <= 1 && Math.abs(n.y - ty) <= 1);
-      if (node) {
+      const loot = this.state.lootAt(tx, ty);
+      const explored = this.state.isExplored(tx, ty);
+      if (!explored) {
+        key = 'fog';
+        html = null;
+      } else if (loot) {
+        key = `l${loot.id}`;
+        html = '<b>Düşmüş Kargo</b>\nİçinde değerli parçalar var\nE/tıkla: aç';
+      } else if (node) {
         key = `n${tx},${ty}`;
-        html = `<b>${itemName(node.item)}</b>\nKaynak düğümü · ${PURITY_NAMES[node.purity]}\nE/tıkla: elle topla · üzerine Maden Çıkarıcı kur`;
-      } else if (hasTree(this.state.map, tx, ty)) {
+        html = ITEMS[node.item].fluid
+          ? `<b>${itemName(node.item)}</b>\nSıvı kaynağı · ${PURITY_NAMES[node.purity]}\nÜzerine Petrol Kuyusu kur`
+          : `<b>${itemName(node.item)}</b>\nKaynak düğümü · ${PURITY_NAMES[node.purity]}\nE/tıkla: elle topla · üzerine Maden Çıkarıcı kur`;
+      } else if (this.state.map.terrain[ty * this.state.map.size + tx] === Terrain.Rock) {
+        key = `r${tx},${ty}`;
+        html = '<b>Kaya</b>\nPatlayıcı ile E/tıkla: 3×3 alanı patlat';
+      } else if (hasTree(this.state.map, tx, ty) && explored) {
         key = `t${tx},${ty}`;
         html = '<b>Ağaç</b>\nE/tıkla: kes (yaprak + odun)';
       } else if (nest) {

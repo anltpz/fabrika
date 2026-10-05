@@ -32,6 +32,17 @@ const list: RecipeDef[] = [
   { id: 'steel_pipe', name: 'Çelik Boru', machines: ['constructor'], hand: true, inputs: { steel_ingot: 3 }, outputs: { steel_pipe: 2 }, time: 6, unlock: 3 },
   { id: 'stator', name: 'Stator', machines: ['assembler'], hand: false, inputs: { steel_pipe: 3, wire: 8 }, outputs: { stator: 1 }, time: 12, unlock: 4 },
   { id: 'motor', name: 'Motor', machines: ['assembler'], hand: false, inputs: { rotor: 2, stator: 2 }, outputs: { motor: 1 }, time: 12, unlock: 4 },
+  { id: 'black_powder', name: 'Siyah Barut', machines: ['assembler'], hand: true, inputs: { coal: 1, sulfur: 1 }, outputs: { black_powder: 2 }, time: 4, unlock: 3 },
+  { id: 'explosive', name: 'Patlayıcı', machines: ['assembler'], hand: true, inputs: { black_powder: 2, steel_pipe: 1 }, outputs: { explosive: 1 }, time: 8, unlock: 3 },
+  { id: 'quartz_crystal', name: 'Kuvars Kristali', machines: ['constructor'], hand: true, inputs: { quartz: 5 }, outputs: { quartz_crystal: 3 }, time: 8, unlock: 3 },
+  { id: 'silica', name: 'Silika', machines: ['constructor'], hand: true, inputs: { quartz: 3 }, outputs: { silica: 5 }, time: 8, unlock: 3 },
+  { id: 'aluminum_ingot', name: 'Alüminyum Külçe', machines: ['foundry'], hand: false, inputs: { bauxite: 3, silica: 2 }, outputs: { aluminum_ingot: 2 }, time: 4, unlock: 4 },
+  { id: 'aluminum_sheet', name: 'Alüminyum Levha', machines: ['constructor'], hand: true, inputs: { aluminum_ingot: 3 }, outputs: { aluminum_sheet: 2 }, time: 6, unlock: 4 },
+  { id: 'plastic', name: 'Plastik', machines: ['refinery'], hand: false, inputs: { crude_oil: 3 }, outputs: { plastic: 2 }, time: 6, unlock: 5 },
+  { id: 'rubber', name: 'Kauçuk', machines: ['refinery'], hand: false, inputs: { crude_oil: 3 }, outputs: { rubber: 2 }, time: 6, unlock: 5 },
+  { id: 'fuel', name: 'Yakıt', machines: ['refinery'], hand: false, inputs: { crude_oil: 6 }, outputs: { fuel: 4 }, time: 6, unlock: 5 },
+  { id: 'circuit_board', name: 'Devre Kartı', machines: ['assembler'], hand: true, inputs: { cable: 3, plastic: 4 }, outputs: { circuit_board: 1 }, time: 8, unlock: 7 },
+  { id: 'computer', name: 'Bilgisayar', machines: ['assembler'], hand: false, inputs: { circuit_board: 4, aluminum_sheet: 8 }, outputs: { computer: 1 }, time: 24, unlock: 7 },
 ];
 
 export const RECIPES: Record<string, RecipeDef> = Object.fromEntries(list.map((r) => [r.id, r]));

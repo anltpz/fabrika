@@ -48,6 +48,9 @@ export interface Snapshot {
   power: PowerNetInfo[];
   blueprints: Blueprint[];
   markers: MapMarker[];
+  explored: number[];
+  lootOpened: number[];
+  blasted: number[];
 }
 
 /** Tick içindeki oyuncu: [id, x, y, açı, hp] */
@@ -72,8 +75,11 @@ export type ServerMsg =
   | { t: 'power'; nets: PowerNetInfo[] }
   | { t: 'blueprints'; list: Blueprint[] }
   | { t: 'markers'; list: MapMarker[] }
+  | { t: 'fog'; cells: number[] }
+  | { t: 'terrain'; grass: number[] }
+  | { t: 'loot'; opened: number[] }
   | { t: 'mapPing'; x: number; y: number; by: number; name: string; color: number }
   | { t: 'stats'; produced: Record<string, number>; consumed: Record<string, number> }
-  | { t: 'fx'; kind: 'hit' | 'swing' | 'death' | 'enemyDeath' | 'harvest' | 'build'; x: number; y: number; angle?: number; by?: number }
+  | { t: 'fx'; kind: 'hit' | 'swing' | 'death' | 'enemyDeath' | 'harvest' | 'build' | 'blast'; x: number; y: number; angle?: number; by?: number }
   | { t: 'toast'; msg: string; kind?: 'info' | 'warn' | 'good' }
   | { t: 'pong'; time: number };

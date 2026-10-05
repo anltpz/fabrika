@@ -20,6 +20,8 @@ export function hasItems(inv: Inventory, cost: Record<string, number>, mult = 1)
 /** Eklenebilen miktarı ekler, sığmayan miktarı döndürür */
 export function addItem(inv: Inventory, item: string, count: number): number {
   const stack = ITEMS[item]?.stack ?? 100;
+  // Sıvılar envantere girmez
+  if (stack <= 0) return count;
   let left = count;
   for (const s of inv) {
     if (left <= 0) break;
@@ -41,6 +43,7 @@ export function addItem(inv: Inventory, item: string, count: number): number {
 
 export function spaceFor(inv: Inventory, item: string): number {
   const stack = ITEMS[item]?.stack ?? 100;
+  if (stack <= 0) return 0;
   let space = 0;
   for (const s of inv) {
     if (!s) space += stack;

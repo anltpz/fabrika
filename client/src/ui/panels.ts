@@ -7,6 +7,7 @@ import {
   PURITY_MULT,
   PURITY_NAMES,
   RECIPES,
+  FOG_CELL,
   MARKER_ICONS,
   RECIPE_LIST,
   blueprintCost,
@@ -53,6 +54,7 @@ export class Panels {
     state.on('blueprints', () => { if (this.kind === 'blueprints') rerender(); });
     state.on('markers', () => { if (this.kind === 'map') rerender(); });
     state.on('trees', () => { this.mapBase = null; });
+    state.on('fog', () => { if (this.kind === 'map') this.drawBigMap(); });
     state.on('buildings', (up: BuildingState[], rem: number[]) => {
       if (this.kind === 'stats') { rerender(); return; }
       if (this.kind !== 'machine' || this.machineId === null) return;
@@ -308,10 +310,21 @@ export class Panels {
       const [fw, fh] = def.w === def.h ? [def.w, def.h] : b.rot % 2 ? [def.h, def.w] : [def.w, def.h];
       g.fillRect(b.x * k, b.y * k, fw * k, fh * k);
     }
+    const cols = Math.ceil(S / FOG_CELL);
+    g.fillStyle = 'rgba(10,12,15,0.93)';
+    for (let cy = 0; cy < cols; cy++) for (let cx = 0; cx < cols; cx++) {
+      if (!this.state.explored[cy * cols + cx]) g.fillRect(cx * FOG_CELL * k, cy * FOG_CELL * k, FOG_CELL * k + 0.5, FOG_CELL * k + 0.5);
+    }
     for (const n of this.state.nests) {
-      if (!n.alive) continue;
+      if (!n.alive || !this.state.isExplored(n.x, n.y)) continue;
       g.fillStyle = '#c040a0';
       g.beginPath(); g.arc((n.x + 0.5) * k, (n.y + 0.5) * k, 5, 0, 7); g.fill();
+    }
+    for (const l of this.state.map.loot) {
+      if (this.state.lootOpened.has(l.id) || !this.state.isExplored(l.x, l.y)) continue;
+      g.font = '14px sans-serif';
+      g.fillStyle = '#ffc040';
+      g.fillText('📦', (l.x + 0.5) * k, (l.y + 0.5) * k + 5);
     }
     g.textAlign = 'center';
     for (const m of this.state.markers) {

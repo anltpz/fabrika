@@ -19,6 +19,13 @@ export interface ResourceNode {
   purity: Purity;
 }
 
+export interface LootSpot {
+  id: number;
+  x: number;
+  y: number;
+  tier: number;
+}
+
 export interface NestSpawn {
   id: number;
   x: number;
@@ -33,6 +40,7 @@ export interface GameMap {
   nodes: ResourceNode[];
   nodeAt: Map<number, ResourceNode>;
   nests: NestSpawn[];
+  loot: LootSpot[];
   spawn: { x: number; y: number };
 }
 
@@ -78,11 +86,16 @@ function fbm(x: number, y: number, seed: number, octaves = 4): number {
   return sum / norm;
 }
 
-const NODE_COUNTS: Array<[string, number]> = [
-  ['ore_iron', 45],
-  ['ore_copper', 35],
-  ['limestone', 35],
-  ['coal', 25],
+/** [eşya, adet, başlangıca en az uzaklık] */
+const NODE_COUNTS: Array<[string, number, number]> = [
+  ['ore_iron', 45, 16],
+  ['ore_copper', 35, 16],
+  ['limestone', 35, 16],
+  ['coal', 25, 16],
+  ['sulfur', 12, 45],
+  ['quartz', 15, 45],
+  ['bauxite', 15, 50],
+  ['crude_oil', 12, 40],
 ];
 
 export function generateMap(seed: number, size = MAP_SIZE): GameMap {
@@ -147,7 +160,7 @@ export function generateMap(seed: number, size = MAP_SIZE): GameMap {
     addNode(Math.round(cx + Math.cos(a) * 28), Math.round(cy + Math.sin(a) * 28), 'coal', 'normal');
   }
 
-  for (const [item, count] of NODE_COUNTS) {
+  for (const [item, count, minDist] of NODE_COUNTS) {
     let placed = 0, tries = 0;
     while (placed < count && tries < count * 60) {
       tries++;
@@ -155,7 +168,7 @@ export function generateMap(seed: number, size = MAP_SIZE): GameMap {
       const y = 6 + Math.floor(rand() * (size - 12));
       const t = terrain[y * size + x];
       if (t === Terrain.Water || t === Terrain.Rock) continue;
-      if (Math.hypot(x - cx, y - cy) < 16) continue;
+      if (Math.hypot(x - cx, y - cy) < minDist) continue;
       if (!farFromNodes(x, y, 4)) continue;
       const r = rand();
       const purity: Purity = r < 0.4 ? 'impure' : r < 0.85 ? 'normal' : 'pure';
@@ -178,7 +191,24 @@ export function generateMap(seed: number, size = MAP_SIZE): GameMap {
     nests.push({ id: nests.length, x, y });
   }
 
-  return { seed, size, terrain, trees, nodes, nodeAt, nests, spawn: { x: cx, y: cy } };
+  // Düşmüş kargolar (keşif ödülleri)
+  const loot: LootSpot[] = [];
+  tries = 0;
+  while (loot.length < 22 && tries < 4000) {
+    tries++;
+    const x = 8 + Math.floor(rand() * (size - 16));
+    const y = 8 + Math.floor(rand() * (size - 16));
+    const t = terrain[y * size + x];
+    if (t !== Terrain.Grass && t !== Terrain.Sand) continue;
+    const d = Math.hypot(x - cx, y - cy);
+    if (d < 30) continue;
+    if (loot.some((l) => Math.hypot(l.x - x, l.y - y) < 18)) continue;
+    if (!farFromNodes(x, y, 3) || nests.some((n) => Math.hypot(n.x - x, n.y - y) < 6)) continue;
+    clearAround(x, y, 1);
+    loot.push({ id: loot.length, x, y, tier: d < 60 ? 0 : d < 95 ? 1 : 2 });
+  }
+
+  return { seed, size, terrain, trees, nodes, nodeAt, nests, loot, spawn: { x: cx, y: cy } };
 }
 
 export function terrainBuildable(map: GameMap, x: number, y: number): boolean {
@@ -190,4 +220,15 @@ export function terrainBuildable(map: GameMap, x: number, y: number): boolean {
 export function hasTree(map: GameMap, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= map.size || y >= map.size) return false;
   return map.trees[y * map.size + x] === 1;
+}
+
+export const LOOT_TABLES: Array<Record<string, number>> = [
+  { iron_plate: 40, iron_rod: 40, wire: 60, concrete: 40 },
+  { reinforced_plate: 15, rotor: 8, cable: 60, steel_beam: 20 },
+  { modular_frame: 10, motor: 4, steel_pipe: 40, explosive: 8 },
+];
+
+export function fogIndex(x: number, y: number, size: number, cell: number): number {
+  const cols = Math.ceil(size / cell);
+  return Math.floor(y / cell) * cols + Math.floor(x / cell);
 }

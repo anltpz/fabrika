@@ -3,6 +3,7 @@ import {
   BUILDINGS,
   CHUNK_SIZE,
   DX,
+  FOG_CELL,
   DY,
   ITEMS,
   PLAYER_MAX_HP,
@@ -85,6 +86,8 @@ export class Renderer {
   private labelLayer = new Container();
   private fxG = new Graphics();
   private markerLayer = new Container();
+  private fogG = new Graphics();
+  private lootG = new Graphics();
   private screenG = new Graphics();
   private markerViews = new Map<number, Container>();
   private chunks = new Map<string, { sprite: Sprite; canvas: HTMLCanvasElement; tex: Texture }>();
@@ -103,7 +106,7 @@ export class Renderer {
   async init(el: HTMLElement) {
     await this.app.init({ resizeTo: window, background: 0x15181c, antialias: true, autoDensity: true, resolution: Math.min(2, window.devicePixelRatio || 1) });
     el.appendChild(this.app.canvas);
-    this.world.addChild(this.ground, this.beltLayer, this.beltItems, this.buildingLayer, this.powerLines, this.entityLayer, this.overlay, this.fxG, this.markerLayer, this.labelLayer);
+    this.world.addChild(this.ground, this.lootG, this.beltLayer, this.beltItems, this.buildingLayer, this.powerLines, this.entityLayer, this.fogG, this.overlay, this.fxG, this.markerLayer, this.labelLayer);
     this.app.stage.addChild(this.world, this.screenG);
     this.app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
@@ -363,6 +366,57 @@ export class Renderer {
     }
   }
 
+  // ------------------------------------------------------------ sis ve kargolar
+
+  drawFog() {
+    const g = this.fogG;
+    g.clear();
+    const S = this.state.map.size;
+    const cols = Math.ceil(S / FOG_CELL);
+    for (let cy = 0; cy < cols; cy++) {
+      // Aynı satırdaki ardışık kapalı hücreleri tek dikdörtgende birleştir
+      let start = -1;
+      for (let cx = 0; cx <= cols; cx++) {
+        const closed = cx < cols && !this.state.explored[cy * cols + cx];
+        if (closed && start < 0) start = cx;
+        if (!closed && start >= 0) {
+          g.rect(start * FOG_CELL, cy * FOG_CELL, (cx - start) * FOG_CELL, FOG_CELL);
+          start = -1;
+        }
+      }
+    }
+    g.fill({ color: 0x0a0c0f, alpha: 0.94 });
+    // Kenar yumuşatma: açık hücrelere komşu kapalı hücrelerin kenarına hafif gölge
+    for (let cy = 0; cy < cols; cy++) for (let cx = 0; cx < cols; cx++) {
+      if (!this.state.explored[cy * cols + cx]) continue;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= cols || this.state.explored[ny * cols + nx]) continue;
+        const x = cx * FOG_CELL, y = cy * FOG_CELL;
+        if (dx === 1) g.rect(x + FOG_CELL - 2, y, 2, FOG_CELL);
+        if (dx === -1) g.rect(x, y, 2, FOG_CELL);
+        if (dy === 1) g.rect(x, y + FOG_CELL - 2, FOG_CELL, 2);
+        if (dy === -1) g.rect(x, y, FOG_CELL, 2);
+      }
+    }
+    g.fill({ color: 0x0a0c0f, alpha: 0.45 });
+  }
+
+  drawLoot() {
+    const g = this.lootG;
+    g.clear();
+    for (const l of this.state.map.loot) {
+      if (this.state.lootOpened.has(l.id)) continue;
+      const x = l.x + 0.5, y = l.y + 0.5;
+      g.ellipse(x + 0.08, y + 0.15, 0.55, 0.35).fill({ color: 0x000000, alpha: 0.35 });
+      g.roundRect(x - 0.42, y - 0.32, 0.84, 0.64, 0.14).fill(0xd88a2a).stroke({ width: 0.05, color: 0x2a1a0a });
+      g.rect(x - 0.42, y - 0.06, 0.84, 0.12).fill(0x6a4a1a);
+      g.circle(x, y, 0.1).fill(0xffe080);
+      // Kırık paraşüt şeridi
+      g.moveTo(x - 0.3, y - 0.32).lineTo(x - 0.6, y - 0.8).moveTo(x + 0.3, y - 0.32).lineTo(x + 0.55, y - 0.85).stroke({ width: 0.04, color: 0xeeeeee, alpha: 0.8 });
+    }
+  }
+
   // ------------------------------------------------------------ işaretler
 
   syncMarkers() {
@@ -425,7 +479,7 @@ export class Renderer {
   // ------------------------------------------------------------ efektler
 
   addFx(msg: Extract<ServerMsg, { t: 'fx' }>) {
-    const life = msg.kind === 'death' ? 1.2 : msg.kind === 'swing' ? 0.2 : 0.5;
+    const life = msg.kind === 'death' || msg.kind === 'blast' ? 1.2 : msg.kind === 'swing' ? 0.2 : 0.5;
     this.fx.push({ kind: msg.kind, x: msg.x, y: msg.y, angle: msg.angle, t: 0, life });
   }
 
@@ -450,6 +504,13 @@ export class Renderer {
         }
       } else if (f.kind === 'build') {
         g.circle(f.x + 0.5, f.y + 0.5, 0.3 + k * 1.2).stroke({ width: 0.08, color: 0xffd060, alpha: 1 - k });
+      } else if (f.kind === 'blast') {
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * Math.PI * 2;
+          const r = k * (1.2 + (i % 3) * 0.5);
+          g.circle(f.x + Math.cos(a) * r, f.y + Math.sin(a) * r, 0.22 * (1 - k)).fill(i % 2 ? 0xff8a20 : 0x8a8a84);
+        }
+        g.circle(f.x, f.y, 0.6 + k * 1.8).fill({ color: 0xffc040, alpha: 0.5 * (1 - k) });
       } else if (f.kind === 'death' || f.kind === 'enemyDeath') {
         const c = f.kind === 'death' ? 0xff4040 : 0x8a2a1a;
         for (let i = 0; i < 10; i++) {
@@ -512,6 +573,7 @@ export class Renderer {
     this.syncNests();
     this.drawFx(dt);
     this.drawPings(vx0, vx1, vy0, vy1);
+    this.lootG.alpha = 0.85 + Math.sin(this.time * 4) * 0.15;
 
     // Önizleme / vurgulama
     const o = this.overlay;

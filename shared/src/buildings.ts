@@ -34,6 +34,8 @@ export interface BuildingDef {
   beltSpeed?: number;
   /** Maden çıkarma hızı (adet/dk, normal saflıkta) */
   mineRate?: number;
+  /** Sıvı çıkarma hızı (birim/dk, normal saflıkta) */
+  pumpRate?: number;
   /** Tarif seçebilen üretim makinesi mi */
   crafter?: boolean;
   short: string;

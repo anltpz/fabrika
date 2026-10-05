@@ -1,6 +1,9 @@
 import {
   BELT_ITEM_SPACING,
   BUILDINGS,
+  FOG_CELL,
+  Terrain,
+  fogIndex,
   DX,
   DY,
   ITEM_IDS,
@@ -84,6 +87,8 @@ export class GameState extends Emitter {
   power: PowerNetInfo[] = [];
   blueprints: Blueprint[] = [];
   markers: MapMarker[] = [];
+  explored = new Uint8Array(0);
+  lootOpened = new Set<number>();
   pings: Array<{ x: number; y: number; color: number; name: string; t0: number }> = [];
   stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
   lastAck = 0;
@@ -107,7 +112,26 @@ export class GameState extends Emitter {
     this.power = snap.power;
     this.blueprints = snap.blueprints ?? [];
     this.markers = snap.markers ?? [];
+    const cols = Math.ceil(this.map.size / FOG_CELL);
+    this.explored = new Uint8Array(cols * cols);
+    for (const i of snap.explored ?? []) this.explored[i] = 1;
+    this.lootOpened = new Set(snap.lootOpened ?? []);
+    for (const k of snap.blasted ?? []) this.setGrass(k);
     this.emit('loaded');
+  }
+
+  private setGrass(k: number) {
+    const x = k % 4096, y = Math.floor(k / 4096);
+    if (x < this.map.size && y < this.map.size) this.map.terrain[y * this.map.size + x] = Terrain.Grass;
+  }
+
+  isExplored(x: number, y: number): boolean {
+    if (x < 0 || y < 0 || x >= this.map.size || y >= this.map.size) return false;
+    return !!this.explored[fogIndex(x, y, this.map.size, FOG_CELL)];
+  }
+
+  lootAt(x: number, y: number) {
+    return this.map.loot.find((l) => l.x === x && l.y === y && !this.lootOpened.has(l.id));
   }
 
   private removeTree(k: number) {
@@ -209,6 +233,18 @@ export class GameState extends Emitter {
       case 'power':
         this.power = msg.nets;
         this.emit('power');
+        break;
+      case 'fog':
+        for (const i of msg.cells) this.explored[i] = 1;
+        this.emit('fog', msg.cells);
+        break;
+      case 'terrain':
+        for (const k of msg.grass) this.setGrass(k);
+        this.emit('trees', msg.grass);
+        break;
+      case 'loot':
+        this.lootOpened = new Set(msg.opened);
+        this.emit('loot');
         break;
       case 'markers':
         this.markers = msg.list;

@@ -100,6 +100,10 @@ async function startGame(net: Net, state: GameState, early: ServerMsg[]) {
   state.on('fx', (fx) => renderer.addFx(fx));
   state.on('error', (msg: string) => hud.toast(msg, 'warn'));
   state.on('markers', () => renderer.syncMarkers());
+  state.on('fog', () => renderer.drawFog());
+  state.on('loot', () => renderer.drawLoot());
+  renderer.drawFog();
+  renderer.drawLoot();
   renderer.syncMarkers();
   state.on('mapPing', (m: { name: string; color: number; x: number; y: number }) => {
     state.emit('chat', { t: 'chat', from: m.name, color: m.color, text: `📡 bir yeri işaretledi (${Math.floor(m.x)}, ${Math.floor(m.y)})` });
