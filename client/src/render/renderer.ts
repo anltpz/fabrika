@@ -84,6 +84,9 @@ export class Renderer {
   private entityLayer = new Container();
   private labelLayer = new Container();
   private fxG = new Graphics();
+  private markerLayer = new Container();
+  private screenG = new Graphics();
+  private markerViews = new Map<number, Container>();
   private chunks = new Map<string, { sprite: Sprite; canvas: HTMLCanvasElement; tex: Texture }>();
   private views = new Map<number, BuildingView>();
   private playerViews = new Map<number, { root: Container; body: Graphics; name: Text; hp: Graphics; color: number }>();
@@ -100,8 +103,8 @@ export class Renderer {
   async init(el: HTMLElement) {
     await this.app.init({ resizeTo: window, background: 0x15181c, antialias: true, autoDensity: true, resolution: Math.min(2, window.devicePixelRatio || 1) });
     el.appendChild(this.app.canvas);
-    this.world.addChild(this.ground, this.beltLayer, this.beltItems, this.buildingLayer, this.powerLines, this.entityLayer, this.overlay, this.fxG, this.labelLayer);
-    this.app.stage.addChild(this.world);
+    this.world.addChild(this.ground, this.beltLayer, this.beltItems, this.buildingLayer, this.powerLines, this.entityLayer, this.overlay, this.fxG, this.markerLayer, this.labelLayer);
+    this.app.stage.addChild(this.world, this.screenG);
     this.app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
@@ -360,6 +363,65 @@ export class Renderer {
     }
   }
 
+  // ------------------------------------------------------------ işaretler
+
+  syncMarkers() {
+    const seen = new Set<number>();
+    for (const m of this.state.markers) {
+      seen.add(m.id);
+      let v = this.markerViews.get(m.id);
+      const text = `${m.icon} ${m.label}`.trim();
+      if (!v) {
+        v = new Container();
+        const t = new Text({ text, style: { fontFamily: 'Inter, Arial', fontSize: 26, fontWeight: '600', fill: 0xffffff, stroke: { color: 0x000000, width: 5 } } });
+        t.anchor.set(0.5, 1);
+        t.scale.set(1 / 48);
+        const pin = new Graphics();
+        pin.circle(0, 0, 0.18).fill(m.color).stroke({ width: 0.05, color: 0x000000 });
+        v.addChild(pin, t);
+        t.position.set(0, -0.2);
+        this.markerLayer.addChild(v);
+        this.markerViews.set(m.id, v);
+      }
+      v.position.set(m.x, m.y);
+    }
+    for (const [id, v] of this.markerViews) if (!seen.has(id)) { v.destroy({ children: true }); this.markerViews.delete(id); }
+  }
+
+  private drawPings(vx0: number, vx1: number, vy0: number, vy1: number) {
+    const now = performance.now();
+    const g = this.fxG;
+    const sg = this.screenG;
+    sg.clear();
+    const sw = this.app.screen.width, sh = this.app.screen.height;
+    for (const p of this.state.pings) {
+      const age = (now - p.t0) / 1000;
+      if (age > 8) continue;
+      const fade = Math.max(0, 1 - age / 8);
+      for (let k = 0; k < 3; k++) {
+        const ph = (age * 1.2 + k / 3) % 1;
+        g.circle(p.x, p.y, 0.3 + ph * 2.2).stroke({ width: 0.12, color: p.color, alpha: (1 - ph) * fade });
+      }
+      g.circle(p.x, p.y, 0.25).fill({ color: p.color, alpha: fade });
+      // Ekran dışındaysa kenarda ok
+      if (p.x < vx0 + 2 || p.x > vx1 - 2 || p.y < vy0 + 2 || p.y > vy1 - 2) {
+        const scale = TILE * this.zoom;
+        const sx = this.world.position.x + p.x * scale, sy = this.world.position.y + p.y * scale;
+        const cx = sw / 2, cy = sh / 2;
+        const a = Math.atan2(sy - cy, sx - cx);
+        const m = 40;
+        const t = Math.min(Math.abs((sw / 2 - m) / Math.cos(a)), Math.abs((sh / 2 - m) / Math.sin(a)));
+        const ex = cx + Math.cos(a) * t, ey = cy + Math.sin(a) * t;
+        sg.moveTo(ex + Math.cos(a) * 18, ey + Math.sin(a) * 18)
+          .lineTo(ex + Math.cos(a + 2.5) * 14, ey + Math.sin(a + 2.5) * 14)
+          .lineTo(ex + Math.cos(a - 2.5) * 14, ey + Math.sin(a - 2.5) * 14)
+          .closePath()
+          .fill({ color: p.color, alpha: fade })
+          .stroke({ width: 2, color: 0x000000, alpha: fade });
+      }
+    }
+  }
+
   // ------------------------------------------------------------ efektler
 
   addFx(msg: Extract<ServerMsg, { t: 'fx' }>) {
@@ -449,6 +511,7 @@ export class Renderer {
     this.syncEnemies(dt);
     this.syncNests();
     this.drawFx(dt);
+    this.drawPings(vx0, vx1, vy0, vy1);
 
     // Önizleme / vurgulama
     const o = this.overlay;

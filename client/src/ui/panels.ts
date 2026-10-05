@@ -7,6 +7,7 @@ import {
   PURITY_MULT,
   PURITY_NAMES,
   RECIPES,
+  MARKER_ICONS,
   RECIPE_LIST,
   blueprintCost,
   SPLITTER_FILTERS,
@@ -23,9 +24,10 @@ import {
 } from '@fabrika/shared';
 import type { BuildingCategory, BuildingState, ClientMsg } from '@fabrika/shared';
 import type { GameState } from '../state';
+import { drawMinimapBase } from '../render/terrain';
 import { chip, costChips, flowChips, fmt, h, hex, icon } from './dom';
 
-type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats' | 'blueprints';
+type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats' | 'blueprints' | 'map';
 
 const STATUS_DOT: Record<string, string> = {
   working: '#5ad65a', idle: '#9aa0a6', nopower: '#e04848', tripped: '#ff3030', full: '#e8c040', nofuel: '#e07a30', norecipe: '#6a9ae8', noinput: '#e8c040', unpaired: '#e04848',
@@ -49,12 +51,19 @@ export class Panels {
     state.on('power', () => { if (this.kind === 'machine' || this.kind === 'stats') rerender(); });
     state.on('stats', () => { if (this.kind === 'stats') rerender(); });
     state.on('blueprints', () => { if (this.kind === 'blueprints') rerender(); });
+    state.on('markers', () => { if (this.kind === 'map') rerender(); });
+    state.on('trees', () => { this.mapBase = null; });
     state.on('buildings', (up: BuildingState[], rem: number[]) => {
       if (this.kind === 'stats') { rerender(); return; }
       if (this.kind !== 'machine' || this.machineId === null) return;
       if (rem.includes(this.machineId)) { this.close(); return; }
       if (up.some((b) => b.id === this.machineId)) rerender();
     });
+  }
+
+  /** Metin girişi isteyen küçük pencere açık mı */
+  isPrompt() {
+    return this.kindOverride && !!this.wrap;
   }
 
   isOpen() {
@@ -77,6 +86,7 @@ export class Panels {
   }
 
   close() {
+    if (this.mapTimer) { clearInterval(this.mapTimer); this.mapTimer = 0; }
     this.kindOverride = false;
     this.kind = null;
     this.machineId = null;
@@ -102,6 +112,7 @@ export class Panels {
     else if (this.kind === 'machine') el = this.renderMachine();
     else if (this.kind === 'stats') el = this.renderStats();
     else if (this.kind === 'blueprints') el = this.renderBlueprints();
+    else if (this.kind === 'map') el = this.renderMap();
     if (!el) { this.close(); return; }
     this.wrap?.remove();
     this.wrap = el;
@@ -239,6 +250,111 @@ export class Panels {
       body.append(el);
     });
     return this.shell('HUB · Kademeler', body);
+  }
+
+  // ------------------------------------------------------------ büyük harita
+
+  private mapBase: HTMLCanvasElement | null = null;
+  private mapTimer = 0;
+  private mapCanvas: HTMLCanvasElement | null = null;
+
+  private renderMap(): HTMLElement {
+    if (this.mapTimer) { clearInterval(this.mapTimer); this.mapTimer = 0; }
+    const S = this.state.map.size;
+    const size = Math.min(620, window.innerHeight - 180, window.innerWidth - 380);
+    const canvas = h('canvas', { width: String(S * 2), height: String(S * 2), class: 'bigmap', style: { width: size + 'px', height: size + 'px' } }) as HTMLCanvasElement;
+    this.mapCanvas = canvas;
+    canvas.addEventListener('click', (e) => {
+      const r = canvas.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * S, y = ((e.clientY - r.top) / r.height) * S;
+      this.markerPrompt(x, y);
+    });
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect();
+      this.send({ t: 'mapPing', x: ((e.clientX - r.left) / r.width) * S, y: ((e.clientY - r.top) / r.height) * S });
+    });
+    const list = h('div', { class: 'marker-list' }, h('div', { class: 'section-title' }, 'İşaretler'));
+    if (!this.state.markers.length) list.append(h('p', { class: 'muted', style: { fontSize: '12px' } }, 'Haritaya tıklayarak işaret koy. Sağ tık: o noktaya ping at.'));
+    for (const m of this.state.markers) {
+      list.append(h('div', { class: 'marker-row' },
+        h('span', { class: 'micon' }, m.icon),
+        h('div', {}, h('div', {}, m.label || '(isimsiz)'), h('div', { class: 'muted', style: { fontSize: '11px' } }, `${Math.floor(m.x)}, ${Math.floor(m.y)} · ${m.by}`)),
+        h('button', { class: 'ghost small', title: 'Ping at', onclick: () => this.send({ t: 'mapPing', x: m.x, y: m.y }) }, '📡'),
+        h('button', { class: 'ghost small', title: 'Sil', onclick: () => this.send({ t: 'markerRemove', id: m.id }) }, '✕'),
+      ));
+    }
+    const body = h('div', { class: 'map-wrap' }, canvas, list);
+    this.drawBigMap();
+    this.mapTimer = window.setInterval(() => this.drawBigMap(), 400);
+    return this.shell('Harita', body);
+  }
+
+  private drawBigMap() {
+    const c = this.mapCanvas;
+    if (!c) return;
+    const S = this.state.map.size;
+    if (!this.mapBase) {
+      this.mapBase = document.createElement('canvas');
+      drawMinimapBase(this.mapBase, this.state.map);
+    }
+    const g = c.getContext('2d')!;
+    const k = c.width / S;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(this.mapBase, 0, 0, c.width, c.height);
+    for (const b of this.state.buildings.values()) {
+      const def = BUILDINGS[b.type];
+      g.fillStyle = hex(def.color);
+      const [fw, fh] = def.w === def.h ? [def.w, def.h] : b.rot % 2 ? [def.h, def.w] : [def.w, def.h];
+      g.fillRect(b.x * k, b.y * k, fw * k, fh * k);
+    }
+    for (const n of this.state.nests) {
+      if (!n.alive) continue;
+      g.fillStyle = '#c040a0';
+      g.beginPath(); g.arc((n.x + 0.5) * k, (n.y + 0.5) * k, 5, 0, 7); g.fill();
+    }
+    g.textAlign = 'center';
+    for (const m of this.state.markers) {
+      g.font = '16px sans-serif';
+      g.fillText(m.icon, m.x * k, m.y * k + 5);
+      if (m.label) {
+        g.font = '600 11px Inter, sans-serif';
+        g.lineWidth = 3; g.strokeStyle = '#000'; g.strokeText(m.label, m.x * k, m.y * k - 10);
+        g.fillStyle = '#fff'; g.fillText(m.label, m.x * k, m.y * k - 10);
+      }
+    }
+    const now = performance.now();
+    for (const p of this.state.pings) {
+      const age = (now - p.t0) / 1000;
+      if (age > 8) continue;
+      g.strokeStyle = hex(p.color); g.lineWidth = 3;
+      g.beginPath(); g.arc(p.x * k, p.y * k, 6 + ((age * 14) % 16), 0, 7); g.stroke();
+    }
+    for (const p of this.state.players.values()) {
+      if (!p.online) continue;
+      g.fillStyle = hex(p.color); g.strokeStyle = '#000'; g.lineWidth = 2;
+      g.beginPath(); g.arc(p.x * k, p.y * k, 6, 0, 7); g.fill(); g.stroke();
+      g.font = '600 11px Inter, sans-serif';
+      g.lineWidth = 3; g.strokeText(p.name, p.x * k, p.y * k - 10);
+      g.fillStyle = '#fff'; g.fillText(p.name, p.x * k, p.y * k - 10);
+    }
+  }
+
+  private markerPrompt(x: number, y: number) {
+    let icon = MARKER_ICONS[0];
+    const input = h('input', { placeholder: 'Örn. Saf demir düğümü', maxlength: '24', style: { width: '100%' } }) as HTMLInputElement;
+    const icons = h('div', { class: 'icon-pick' });
+    const renderIcons = () => icons.replaceChildren(...MARKER_ICONS.map((ic) => h('button', { class: 'ghost' + (ic === icon ? ' on' : ''), onclick: () => { icon = ic; renderIcons(); input.focus(); } }, ic)));
+    renderIcons();
+    const ok = () => { this.send({ t: 'markerAdd', x, y, label: input.value.trim(), icon }); this.open('map'); };
+    input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') ok(); if (e.key === 'Escape') this.open('map'); });
+    if (this.mapTimer) { clearInterval(this.mapTimer); this.mapTimer = 0; }
+    this.wrap?.remove();
+    this.kind = null;
+    this.wrap = this.shell(`İşaret koy (${Math.floor(x)}, ${Math.floor(y)})`, h('div', {}, icons, input, h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } }, h('button', { onclick: ok }, 'Ekle'), h('button', { class: 'ghost', onclick: () => this.open('map') }, 'Vazgeç'))), true);
+    this.kindOverride = true;
+    this.parent.append(this.wrap);
+    input.focus();
   }
 
   // ------------------------------------------------------------ planlar

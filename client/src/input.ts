@@ -83,6 +83,7 @@ export class Controller {
 
   private onKey(e: KeyboardEvent, down: boolean) {
     if (this.typingInField(e)) return;
+    if (this.panels.isPrompt() && e.key !== 'Escape') return;
     const k = e.key.toLowerCase();
     const code = e.code;
     if (down) this.keys.add(code); else this.keys.delete(code);
@@ -101,6 +102,8 @@ export class Controller {
     if (k === 'h') { this.panels.toggle('hub'); return; }
     if (k === 'p') { this.panels.toggle('stats'); return; }
     if (k === 'b') { this.panels.toggle('blueprints'); return; }
+    if (k === 'm') { this.panels.toggle('map'); return; }
+    if (k === 'g') { const [x, y] = this.mouseWorld(); this.send({ t: 'mapPing', x, y }); return; }
     if (k === 'f') {
       if (this.mode === 'dismantle') this.cancelMode(); else { this.mode = 'dismantle'; this.panels.close(); this.updateBanner(); this.refreshHotbar(); }
       return;

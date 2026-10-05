@@ -92,13 +92,18 @@ async function startGame(net: Net, state: GameState, early: ServerMsg[]) {
   const panels = new Panels(state, ui, send);
   hud.onChat = (text) => send({ t: 'chat', text });
   hud.onOpenHub = () => panels.toggle('hub');
-  hud.onOpenPanel = (kind) => panels.toggle(kind as 'stats' | 'blueprints');
+  hud.onOpenPanel = (kind) => panels.toggle(kind as 'stats' | 'blueprints' | 'map');
   const controller = new Controller(state, renderer, hud, panels, send);
 
   state.on('buildings', (up, rem) => renderer.syncBuildings(up, rem));
   state.on('trees', (keys: number[]) => renderer.redrawTreeChunks(keys));
   state.on('fx', (fx) => renderer.addFx(fx));
   state.on('error', (msg: string) => hud.toast(msg, 'warn'));
+  state.on('markers', () => renderer.syncMarkers());
+  renderer.syncMarkers();
+  state.on('mapPing', (m: { name: string; color: number; x: number; y: number }) => {
+    state.emit('chat', { t: 'chat', from: m.name, color: m.color, text: `📡 bir yeri işaretledi (${Math.floor(m.x)}, ${Math.floor(m.y)})` });
+  });
 
   net.onMessage = (msg) => state.handle(msg);
   for (const m of early) state.handle(m);

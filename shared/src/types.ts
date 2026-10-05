@@ -94,3 +94,15 @@ export interface CraftJob {
   remaining: number;
   progress: number;
 }
+
+export interface MapMarker {
+  id: number;
+  x: number;
+  y: number;
+  label: string;
+  icon: string;
+  color: number;
+  by: string;
+}
+
+export const MARKER_ICONS = ['📍', '⛏️', '⚠️', '🏠', '⭐', '⚡', '🐛', '🏭'];

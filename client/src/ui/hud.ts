@@ -41,11 +41,16 @@ export class Hud {
     const btns = h('div', { class: 'hud-btns' },
       h('button', { class: 'ghost', onclick: () => this.onOpenPanel('stats'), title: 'P' }, '📊 İstatistik'),
       h('button', { class: 'ghost', onclick: () => this.onOpenPanel('blueprints'), title: 'B' }, '📐 Planlar'),
+      h('button', { class: 'ghost', onclick: () => this.onOpenPanel('map'), title: 'M' }, '🗺️ Harita'),
     );
     this.btns = btns;
     const top = h('div', { class: 'hud-top' }, this.roomBox, this.techMini, this.power, btns);
     const mm = h('div', { class: 'hud-box minimap' }, this.minimap, this.coords);
-    const keys = h('div', { class: 'keys', html: '<span class="kbd">WASD</span> hareket · <span class="kbd">Q</span> inşa · <span class="kbd">R</span> döndür · <span class="kbd">F</span> söküm<br><span class="kbd">E</span> topla/etkileşim · <span class="kbd">Tab</span> envanter · <span class="kbd">H</span> HUB · <span class="kbd">P</span> istatistik · <span class="kbd">B</span> planlar<br><span class="kbd">Sol tık</span> saldır/kullan · <span class="kbd">Sağ tık</span> iptal · <span class="kbd">Enter</span> sohbet' });
+    const keys = h('div', { class: 'keys', html:
+      '<span class="kbd">WASD</span> hareket · <span class="kbd">E</span> topla/aç · <span class="kbd">Sol tık</span> kullan/saldır · <span class="kbd">Sağ tık</span> iptal<br>' +
+      '<span class="kbd">Q</span> inşa · <span class="kbd">R</span> döndür · <span class="kbd">F</span> söküm · <span class="kbd">B</span> planlar<br>' +
+      '<span class="kbd">Tab</span> envanter · <span class="kbd">H</span> HUB · <span class="kbd">P</span> istatistik · <span class="kbd">M</span> harita<br>' +
+      '<span class="kbd">G</span> ping · <span class="kbd">Enter</span> sohbet' });
     this.chatWrap.append(this.chatLog, this.chatInput);
     this.chatInput.addEventListener('keydown', (e) => {
       e.stopPropagation();
@@ -222,6 +227,21 @@ export class Hud {
       g.beginPath();
       g.arc((n.x - sx) * k, (n.y - sy) * k, 3, 0, 7);
       g.fill();
+    }
+    for (const m of this.state.markers) {
+      g.font = '12px sans-serif';
+      g.textAlign = 'center';
+      g.fillText(m.icon, (m.x - sx) * k, (m.y - sy) * k + 4);
+    }
+    const now = performance.now();
+    for (const pg of this.state.pings) {
+      const age = (now - pg.t0) / 1000;
+      if (age > 8) continue;
+      g.strokeStyle = hex(pg.color);
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc((pg.x - sx) * k, (pg.y - sy) * k, 3 + (age * 6) % 8, 0, 7);
+      g.stroke();
     }
     for (const p of this.state.players.values()) {
       if (!p.online) continue;

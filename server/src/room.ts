@@ -42,6 +42,7 @@ export class Room {
       inventory: p.inventory,
       power: this.world.netInfo,
       blueprints: this.world.blueprints,
+      markers: this.world.markers,
     };
     this.sendTo(p.id, { t: 'welcome', snap });
     this.broadcast({ t: 'players', players: this.world.playersPublic() });
@@ -83,6 +84,9 @@ export class Room {
       case 'bpSave': w.bpSave(id, msg.name, msg.x0, msg.y0, msg.x1, msg.y1); break;
       case 'bpPlace': w.bpPlace(id, msg.id, msg.x, msg.y, msg.rot); break;
       case 'bpDelete': w.bpDelete(id, msg.id); break;
+      case 'mapPing': w.mapPing(id, msg.x, msg.y); break;
+      case 'markerAdd': w.markerAdd(id, msg.x, msg.y, msg.label, msg.icon); break;
+      case 'markerRemove': w.markerRemove(id, msg.id); break;
       case 'setFilter': w.setFilter(id, msg.id, msg.index, msg.filter); break;
       case 'ping': this.sendTo(id, { t: 'pong', time: msg.time }); break;
     }

@@ -19,6 +19,7 @@ import {
 import type {
   BeltItem,
   Blueprint,
+  MapMarker,
   BuildingState,
   CraftJob,
   GameMap,
@@ -82,6 +83,8 @@ export class GameState extends Emitter {
   craftQueue: CraftJob[] = [];
   power: PowerNetInfo[] = [];
   blueprints: Blueprint[] = [];
+  markers: MapMarker[] = [];
+  pings: Array<{ x: number; y: number; color: number; name: string; t0: number }> = [];
   stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
   lastAck = 0;
 
@@ -103,6 +106,7 @@ export class GameState extends Emitter {
     this.inventory = snap.inventory;
     this.power = snap.power;
     this.blueprints = snap.blueprints ?? [];
+    this.markers = snap.markers ?? [];
     this.emit('loaded');
   }
 
@@ -205,6 +209,15 @@ export class GameState extends Emitter {
       case 'power':
         this.power = msg.nets;
         this.emit('power');
+        break;
+      case 'markers':
+        this.markers = msg.list;
+        this.emit('markers');
+        break;
+      case 'mapPing':
+        this.pings.push({ x: msg.x, y: msg.y, color: msg.color, name: msg.name, t0: performance.now() });
+        this.pings = this.pings.filter((p) => performance.now() - p.t0 < 8000);
+        this.emit('mapPing', msg);
         break;
       case 'blueprints':
         this.blueprints = msg.list;

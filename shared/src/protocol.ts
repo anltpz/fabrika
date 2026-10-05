@@ -1,5 +1,5 @@
 import type { Blueprint } from './blueprints';
-import type { BuildingState, CraftJob, EnemyState, NestState, PlayerPublic, PowerNetInfo, Slot, TechState } from './types';
+import type { BuildingState, CraftJob, EnemyState, MapMarker, NestState, PlayerPublic, PowerNetInfo, Slot, TechState } from './types';
 
 export interface InputState {
   up: boolean;
@@ -20,6 +20,9 @@ export type ClientMsg =
   | { t: 'bpSave'; name: string; x0: number; y0: number; x1: number; y1: number }
   | { t: 'bpPlace'; id: number; x: number; y: number; rot: number }
   | { t: 'bpDelete'; id: number }
+  | { t: 'mapPing'; x: number; y: number }
+  | { t: 'markerAdd'; x: number; y: number; label: string; icon: string }
+  | { t: 'markerRemove'; id: number }
   | { t: 'take'; id: number; from: 'in' | 'out' | 'storage'; item?: string; slot?: number }
   | { t: 'put'; id: number; slot: number; count?: number }
   | { t: 'craft'; recipe: string; count: number }
@@ -44,6 +47,7 @@ export interface Snapshot {
   inventory: Array<Slot | null>;
   power: PowerNetInfo[];
   blueprints: Blueprint[];
+  markers: MapMarker[];
 }
 
 /** Tick içindeki oyuncu: [id, x, y, açı, hp] */
@@ -67,6 +71,8 @@ export type ServerMsg =
   | { t: 'nests'; nests: NestState[] }
   | { t: 'power'; nets: PowerNetInfo[] }
   | { t: 'blueprints'; list: Blueprint[] }
+  | { t: 'markers'; list: MapMarker[] }
+  | { t: 'mapPing'; x: number; y: number; by: number; name: string; color: number }
   | { t: 'stats'; produced: Record<string, number>; consumed: Record<string, number> }
   | { t: 'fx'; kind: 'hit' | 'swing' | 'death' | 'enemyDeath' | 'harvest' | 'build'; x: number; y: number; angle?: number; by?: number }
   | { t: 'toast'; msg: string; kind?: 'info' | 'warn' | 'good' }

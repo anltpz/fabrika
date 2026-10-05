@@ -18,6 +18,7 @@ import {
   INVENTORY_SLOTS,
   ITEMS,
   ITEM_INDEX,
+  MARKER_ICONS,
   MAX_PLAYERS,
   MILESTONES,
   NEST_HP,
@@ -68,6 +69,7 @@ import {
 } from '@fabrika/shared';
 import type {
   Blueprint,
+  MapMarker,
   BuildingState,
   CraftJob,
   Dir,
@@ -133,6 +135,7 @@ export interface SaveData {
   removedTrees: number[];
   tech: TechState;
   blueprints?: Blueprint[];
+  markers?: MapMarker[];
 }
 
 const MACHINE_OUT_CAP = 50;
@@ -170,6 +173,8 @@ export class World {
   cheats = false;
   stats = new ProductionStats();
   blueprints: Blueprint[] = [];
+  markers: MapMarker[] = [];
+  private lastPing = new Map<number, number>();
 
   /** Güç ağları önbelleği */
   private powerDirty = true;
@@ -232,6 +237,7 @@ export class World {
     }
     w.tech = data.tech;
     w.blueprints = data.blueprints ?? [];
+    w.markers = data.markers ?? [];
     w.changed.clear();
     return w;
   }
@@ -248,6 +254,7 @@ export class World {
       removedTrees: [...this.removedTrees],
       tech: this.tech,
       blueprints: this.blueprints,
+      markers: this.markers,
     };
   }
 
@@ -758,6 +765,40 @@ export class World {
       this.toast(id, `${moved} parça teslim edildi`, 'good');
     }
     this.broadcast({ t: 'tech', tech: this.tech });
+  }
+
+  // ---------------------------------------------------------------- harita işaretleri
+
+  mapPing(id: number, x: number, y: number) {
+    const p = this.players.get(id);
+    if (!p || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    const last = this.lastPing.get(id) ?? -10;
+    if (this.time - last < 1) return;
+    this.lastPing.set(id, this.time);
+    this.broadcast({ t: 'mapPing', x: clamp(x, 0, this.map.size), y: clamp(y, 0, this.map.size), by: id, name: p.name, color: p.color });
+  }
+
+  markerAdd(id: number, x: number, y: number, label: string, icon: string) {
+    const p = this.players.get(id);
+    if (!p || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (this.markers.length >= 100) { this.toast(id, 'En fazla 100 işaret olabilir'); return; }
+    this.markers.push({
+      id: this.nextId++,
+      x: clamp(x, 0, this.map.size),
+      y: clamp(y, 0, this.map.size),
+      label: String(label ?? '').trim().slice(0, 24),
+      icon: MARKER_ICONS.includes(icon) ? icon : MARKER_ICONS[0],
+      color: p.color,
+      by: p.name,
+    });
+    this.broadcast({ t: 'markers', list: this.markers });
+  }
+
+  markerRemove(id: number, markerId: number) {
+    if (!this.players.has(id)) return;
+    const n = this.markers.length;
+    this.markers = this.markers.filter((m) => m.id !== markerId);
+    if (this.markers.length !== n) this.broadcast({ t: 'markers', list: this.markers });
   }
 
   // ---------------------------------------------------------------- planlar
@@ -1397,6 +1438,10 @@ export class World {
     const n = this.map.nodeAt.get(tileKey(x, y));
     return n ? `${itemName(n.item)} (${PURITY_NAMES[n.purity]})` : undefined;
   }
+}
+
+function clamp(n: number, a: number, b: number): number {
+  return Math.max(a, Math.min(b, n));
 }
 
 function round2(n: number): number {

@@ -312,6 +312,24 @@ describe('planlar', () => {
   });
 });
 
+describe('işaretler', () => {
+  it('işaret eklenir, silinir ve kaydedilir; ping sınırlanır', () => {
+    const { w, p } = setup();
+    w.markerAdd(p.id, 50.5, 60.5, 'Kömür burada', '⛏️');
+    w.markerAdd(p.id, 10, 10, 'x', 'geçersiz');
+    expect(w.markers.length).toBe(2);
+    expect(w.markers[1].icon).toBe('📍');
+    const saved = World.fromSave(JSON.parse(JSON.stringify(w.serialize())));
+    expect(saved.markers[0]).toMatchObject({ label: 'Kömür burada', icon: '⛏️', by: 'Test' });
+    w.markerRemove(p.id, w.markers[0].id);
+    expect(w.markers.length).toBe(1);
+    w.out = [];
+    w.mapPing(p.id, 20, 20);
+    w.mapPing(p.id, 21, 21);
+    expect(w.out.filter((m) => m.t === 'mapPing').length).toBe(1);
+  });
+});
+
 describe('kayıt', () => {
   it('kaydet/yükle aynı dünyayı verir', () => {
     const { w, p } = setup();
