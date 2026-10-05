@@ -24,7 +24,7 @@ import type { BuildingCategory, BuildingState, ClientMsg } from '@fabrika/shared
 import type { GameState } from '../state';
 import { chip, costChips, flowChips, fmt, h, hex, icon } from './dom';
 
-type PanelKind = 'build' | 'inventory' | 'hub' | 'machine';
+type PanelKind = 'build' | 'inventory' | 'hub' | 'machine' | 'stats';
 
 const STATUS_DOT: Record<string, string> = {
   working: '#5ad65a', idle: '#9aa0a6', nopower: '#e04848', tripped: '#ff3030', full: '#e8c040', nofuel: '#e07a30', norecipe: '#6a9ae8', noinput: '#e8c040', unpaired: '#e04848',
@@ -43,8 +43,10 @@ export class Panels {
     state.on('inv', rerender);
     state.on('craft', rerender);
     state.on('tech', rerender);
-    state.on('power', () => { if (this.kind === 'machine') rerender(); });
+    state.on('power', () => { if (this.kind === 'machine' || this.kind === 'stats') rerender(); });
+    state.on('stats', () => { if (this.kind === 'stats') rerender(); });
     state.on('buildings', (up: BuildingState[], rem: number[]) => {
+      if (this.kind === 'stats') { rerender(); return; }
       if (this.kind !== 'machine' || this.machineId === null) return;
       if (rem.includes(this.machineId)) { this.close(); return; }
       if (up.some((b) => b.id === this.machineId)) rerender();
@@ -93,6 +95,7 @@ export class Panels {
     else if (this.kind === 'inventory') el = this.renderInventory();
     else if (this.kind === 'hub') el = this.renderHub();
     else if (this.kind === 'machine') el = this.renderMachine();
+    else if (this.kind === 'stats') el = this.renderStats();
     if (!el) { this.close(); return; }
     this.wrap?.remove();
     this.wrap = el;
@@ -232,6 +235,82 @@ export class Panels {
     return this.shell('HUB · Kademeler', body);
   }
 
+  // ------------------------------------------------------------ istatistik
+
+  private renderStats(): HTMLElement {
+    const { produced, consumed } = this.state.stats;
+    const body = h('div');
+    const items = [...new Set([...Object.keys(produced), ...Object.keys(consumed)])]
+      .filter((k) => (produced[k] ?? 0) > 0 || (consumed[k] ?? 0) > 0)
+      .sort((a, b) => (produced[b] ?? 0) + (consumed[b] ?? 0) - (produced[a] ?? 0) - (consumed[a] ?? 0));
+    body.append(h('div', { class: 'section-title' }, 'Eşya Akışı', h('span', { class: 'muted', style: { fontFamily: 'Inter', fontWeight: '400', fontSize: '12px' } }, 'son 60 saniye, dakika başına')));
+    if (!items.length) {
+      body.append(h('p', { class: 'muted' }, 'Henüz üretim yok. Makineler çalışmaya başlayınca burada görünecek.'));
+    } else {
+      const table = h('table', { class: 'stats-table' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Eşya'), h('th', {}, 'Üretim/dk'), h('th', {}, 'Tüketim/dk'), h('th', {}, 'Net'))));
+      const tb = h('tbody');
+      for (const k of items) {
+        const p = produced[k] ?? 0, c = consumed[k] ?? 0, net = Math.round((p - c) * 10) / 10;
+        tb.append(h('tr', {},
+          h('td', {}, h('span', { class: 'it' }, icon(k), itemName(k))),
+          h('td', {}, fmt(p)),
+          h('td', {}, fmt(c)),
+          h('td', { class: net < 0 ? 'bad' : net > 0 ? 'good' : 'muted' }, (net > 0 ? '+' : '') + fmt(net)),
+        ));
+      }
+      table.append(tb);
+      body.append(table);
+    }
+
+    // Makine grupları ve darboğazlar
+    type Group = { name: string; count: number; eff: number; statuses: Record<string, number>; recipe?: string };
+    const groups = new Map<string, Group>();
+    for (const b of this.state.buildings.values()) {
+      const def = BUILDINGS[b.type];
+      if (!def.crafter && !def.mineRate && !def.powerGen) continue;
+      const key = `${b.type}:${b.recipe ?? ''}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = { name: def.name + (b.recipe ? ` · ${RECIPES[b.recipe].name}` : ''), count: 0, eff: 0, statuses: {}, recipe: b.recipe };
+        groups.set(key, g);
+      }
+      g.count++;
+      g.eff += b.eff ?? 0;
+      g.statuses[b.status] = (g.statuses[b.status] ?? 0) + 1;
+    }
+    body.append(h('div', { class: 'section-title' }, 'Makineler'));
+    if (!groups.size) body.append(h('p', { class: 'muted' }, 'Henüz makine yok.'));
+    const hint = (st: string, g: Group): string => {
+      const r = g.recipe ? RECIPES[g.recipe] : undefined;
+      switch (st) {
+        case 'noinput': return r ? `Girdi yetersiz: ${Object.keys(r.inputs).map(itemName).join(', ')} üretimini artır veya bant bağlantısını kontrol et` : 'Kaynak düğümü yok';
+        case 'full': return 'Çıkış dolu: çıktıyı alan bant/depo yok ya da hat tıkalı';
+        case 'nopower': return 'Elektrik yok: bir direğin menziline al veya jeneratör ekle';
+        case 'tripped': return 'Sigorta attı: üretimi artır ve bir direkten sıfırla';
+        case 'norecipe': return 'Tarif seçilmemiş';
+        case 'nofuel': return 'Yakıt yok: jeneratöre yakıt taşı';
+        default: return '';
+      }
+    };
+    const list = h('div', { class: 'recipe-list' });
+    for (const g of [...groups.values()].sort((a, b) => a.eff / a.count - b.eff / b.count)) {
+      const avg = Math.round((100 * g.eff) / g.count);
+      const problems = Object.entries(g.statuses).filter(([st]) => st !== 'working' && st !== 'idle' && hint(st, g));
+      const row = h('div', { class: 'recipe' + (problems.length ? ' warn' : '') },
+        h('div', { class: 'rname' }, `${g.count}× ${g.name}`),
+        h('div', { class: 'flow', style: { flexDirection: 'column', alignItems: 'flex-start', gap: '2px' } },
+          ...problems.map(([st, n]) => h('div', { class: 'bad', style: { fontSize: '12px' } }, `⚠ ${n} adet: ${hint(st, g)}`)),
+          problems.length ? null : h('div', { class: 'muted', style: { fontSize: '12px' } }, 'Sorun yok'),
+        ),
+        h('div', { class: 'eff' }, h('div', { class: 'progress', style: { width: '90px' } }, h('div', { style: { width: `${avg}%` } })), h('span', {}, `%${avg}`)),
+      );
+      list.append(row);
+    }
+    body.append(list);
+    return this.shell('Üretim İstatistikleri', body);
+  }
+
   // ------------------------------------------------------------ makine paneli
 
   private renderMachine(): HTMLElement | null {
@@ -257,7 +336,10 @@ export class Panels {
         )
       : null;
     const fuseBtn = net?.tripped || b.tripped ? h('button', { onclick: () => this.send({ t: 'resetFuse', id: b.id }) }, 'Sigortayı Sıfırla') : null;
-    body.append(h('div', { class: 'machine-head' }, statusPill, fuseBtn), powerLine ?? h('div'));
+    const effLine = def.crafter || def.mineRate || def.powerGen
+      ? h('span', { class: 'status-pill', title: 'Son ~15 saniyede çalıştığı zaman oranı' }, `Verim %${Math.round((b.eff ?? 0) * 100)}`)
+      : null;
+    body.append(h('div', { class: 'machine-head' }, statusPill, effLine, fuseBtn), powerLine ?? h('div'));
 
     if (def.crafter) body.append(this.crafterSection(b));
     else if (def.mineRate) body.append(this.minerSection(b, def.mineRate));

@@ -76,6 +76,13 @@ describe('üretim zinciri', () => {
     expect(ingots).toBeGreaterThanOrEqual(8);
     expect(smelter.status).toBe('working');
     expect(gen.status).toBe('working');
+    // İstatistikler ve verim
+    const st = w.stats.snapshot();
+    expect(st.produced.ore_iron).toBeGreaterThan(40);
+    expect(st.consumed.ore_iron).toBeGreaterThan(15);
+    expect(st.produced.iron_ingot).toBeGreaterThan(15);
+    expect(st.consumed.biomass).toBeGreaterThan(0);
+    expect(smelter.eff!).toBeGreaterThan(0.5);
   });
 
   it('enerjisiz makine çalışmaz', () => {

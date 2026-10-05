@@ -93,6 +93,7 @@ export class Controller {
     if (k === 'q') { this.panels.toggle('build'); return; }
     if (k === 'i') { this.panels.toggle('inventory'); return; }
     if (k === 'h') { this.panels.toggle('hub'); return; }
+    if (k === 'p') { this.panels.toggle('stats'); return; }
     if (k === 'f') {
       if (this.mode === 'dismantle') this.cancelMode(); else { this.mode = 'dismantle'; this.panels.close(); this.updateBanner(); this.refreshHotbar(); }
       return;

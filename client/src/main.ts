@@ -92,6 +92,7 @@ async function startGame(net: Net, state: GameState, early: ServerMsg[]) {
   const panels = new Panels(state, ui, send);
   hud.onChat = (text) => send({ t: 'chat', text });
   hud.onOpenHub = () => panels.toggle('hub');
+  hud.onOpenPanel = (kind) => panels.toggle(kind as 'stats');
   const controller = new Controller(state, renderer, hud, panels, send);
 
   state.on('buildings', (up, rem) => renderer.syncBuildings(up, rem));

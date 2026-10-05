@@ -101,6 +101,17 @@ select:focus { border-color: var(--accent); }
 .filter-row img, .filter-row .ficon { width: 26px; height: 26px; display: inline-block; }
 .filter-row select { flex: 1; }
 
+.stats-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.stats-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.stats-table td { padding: 4px 8px; border-bottom: 1px solid rgba(58,65,75,.4); font-family: Rajdhani, sans-serif; font-weight: 700; font-size: 15px; }
+.stats-table td:first-child { font-family: Inter; font-weight: 500; font-size: 13px; }
+.stats-table .it { display: inline-flex; align-items: center; gap: 8px; }
+.stats-table img { width: 22px; height: 22px; }
+.recipe.warn { border-color: #6a3a2a; }
+.recipe .eff { display: flex; align-items: center; gap: 8px; font-family: Rajdhani, sans-serif; font-weight: 700; }
+.hud-btns { display: flex; gap: 6px; pointer-events: auto; }
+.hud-btns button { padding: 5px 10px; font-size: 13px; }
+
 /* ---------- Toast ---------- */
 .toasts { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .toast { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 8px 14px; border-radius: 6px; font-size: 14px; animation: tin .2s ease-out; }

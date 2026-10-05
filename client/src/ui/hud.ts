@@ -20,11 +20,13 @@ export class Hud {
   private toasts = h('div', { class: 'toasts' });
   tooltip = h('div', { class: 'tooltip', style: { display: 'none' } });
   private tooltipHtml = '';
+  btns!: HTMLElement;
   private chatWrap = h('div', { class: 'chat' });
   private chatLog = h('div', { class: 'chat-log' });
   chatInput = h('input', { maxlength: '200', placeholder: 'Mesaj yaz... (/yardim)' }) as HTMLInputElement;
   onChat: (text: string) => void = () => {};
   onOpenHub: () => void = () => {};
+  onOpenPanel: (kind: string) => void = () => {};
   onHotbar: (i: number) => void = () => {};
 
   constructor(private state: GameState, parent: HTMLElement) {
@@ -36,9 +38,13 @@ export class Hud {
     });
     this.roomBox.append(h('div', { class: 'room-line' }, h('span', { class: 'muted' }, 'Oda'), roomCode, this.ping), this.players);
     this.techMini.addEventListener('click', () => this.onOpenHub());
-    const top = h('div', { class: 'hud-top' }, this.roomBox, this.techMini, this.power);
+    const btns = h('div', { class: 'hud-btns' },
+      h('button', { class: 'ghost', onclick: () => this.onOpenPanel('stats'), title: 'P' }, '📊 İstatistik'),
+    );
+    this.btns = btns;
+    const top = h('div', { class: 'hud-top' }, this.roomBox, this.techMini, this.power, btns);
     const mm = h('div', { class: 'hud-box minimap' }, this.minimap, this.coords);
-    const keys = h('div', { class: 'keys', html: '<span class="kbd">WASD</span> hareket · <span class="kbd">Q</span> inşa · <span class="kbd">R</span> döndür · <span class="kbd">F</span> söküm<br><span class="kbd">E</span> topla/etkileşim · <span class="kbd">Tab</span> envanter · <span class="kbd">H</span> HUB<br><span class="kbd">Sol tık</span> saldır/kullan · <span class="kbd">Sağ tık</span> iptal · <span class="kbd">Enter</span> sohbet' });
+    const keys = h('div', { class: 'keys', html: '<span class="kbd">WASD</span> hareket · <span class="kbd">Q</span> inşa · <span class="kbd">R</span> döndür · <span class="kbd">F</span> söküm<br><span class="kbd">E</span> topla/etkileşim · <span class="kbd">Tab</span> envanter · <span class="kbd">H</span> HUB · <span class="kbd">P</span> istatistik<br><span class="kbd">Sol tık</span> saldır/kullan · <span class="kbd">Sağ tık</span> iptal · <span class="kbd">Enter</span> sohbet' });
     this.chatWrap.append(this.chatLog, this.chatInput);
     this.chatInput.addEventListener('keydown', (e) => {
       e.stopPropagation();

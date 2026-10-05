@@ -80,6 +80,7 @@ export class GameState extends Emitter {
   inventory: Inventory = makeInventory(INVENTORY_SLOTS);
   craftQueue: CraftJob[] = [];
   power: PowerNetInfo[] = [];
+  stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
   lastAck = 0;
 
   load(snap: Snapshot) {
@@ -201,6 +202,10 @@ export class GameState extends Emitter {
       case 'power':
         this.power = msg.nets;
         this.emit('power');
+        break;
+      case 'stats':
+        this.stats = { produced: msg.produced, consumed: msg.consumed };
+        this.emit('stats');
         break;
       case 'chat':
         this.emit('chat', msg);

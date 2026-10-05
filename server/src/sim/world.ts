@@ -78,6 +78,7 @@ import type {
   TechState,
 } from '@fabrika/shared';
 import { computeNetworks, PowerNetwork } from './power';
+import { ProductionStats } from './stats';
 
 export interface PlayerData {
   id: number;
@@ -161,6 +162,7 @@ export class World {
   removedTrees = new Set<number>();
   tech: TechState = { completed: 0, delivered: {} };
   cheats = false;
+  stats = new ProductionStats();
 
   /** Güç ağları önbelleği */
   private powerDirty = true;
@@ -831,6 +833,19 @@ export class World {
     this.updateMachines();
     this.updateLogistics();
     this.updateEnemies();
+    this.updateEfficiency();
+    if (this.tickCount % 20 === 0) this.stats.rotate();
+  }
+
+  /** Makinelerin son ~15 sn'deki çalışma oranı */
+  private updateEfficiency() {
+    const k = DT / 15;
+    for (const b of this.buildings.values()) {
+      const def = BUILDINGS[b.type];
+      if (!def.crafter && !def.mineRate && !def.powerGen) continue;
+      const cur = b.eff ?? 0;
+      b.eff = cur + ((b.status === 'working' ? 1 : 0) - cur) * k;
+    }
   }
 
   private updatePlayers() {
@@ -859,6 +874,7 @@ export class World {
         return;
       }
       removeItems(p.inventory, r.inputs);
+      for (const [k, v] of Object.entries(r.inputs)) this.stats.consume(k, v);
       p.dirtyInv = true;
       job.progress = 1e-6;
     }
@@ -867,6 +883,7 @@ export class World {
       job.progress = 0;
       job.remaining--;
       this.giveOrDrop(p, Object.entries(r.outputs));
+      for (const [k, v] of Object.entries(r.outputs)) this.stats.produce(k, v);
       if (job.remaining <= 0) p.craftQueue.shift();
       p.dirtyCraft = true;
     } else if (this.tickCount % 4 === 0) {
@@ -937,6 +954,7 @@ export class World {
         g.inBuf[f]--;
         if (g.inBuf[f] <= 0) delete g.inBuf[f];
         g.fuel = (g.fuel ?? 0) + (ITEMS[f].energy ?? 0);
+        this.stats.consume(f, 1);
       }
       const use = Math.min(need, g.fuel!);
       g.fuel! -= use;
@@ -993,6 +1011,7 @@ export class World {
     while (b.progress >= 1) {
       b.progress -= 1;
       b.outBuf[node.item] = (b.outBuf[node.item] ?? 0) + 1;
+      this.stats.produce(node.item, 1);
     }
   }
 
@@ -1005,6 +1024,7 @@ export class World {
     if (!this.powered.has(b.id)) { this.setStatus(b, this.netTripped(b) ? 'tripped' : 'nopower'); return; }
     if (b.progress === 0) {
       for (const [k, v] of Object.entries(r.inputs)) {
+        this.stats.consume(k, v);
         b.inBuf[k] -= v;
         if (b.inBuf[k] <= 0) delete b.inBuf[k];
       }
@@ -1014,7 +1034,7 @@ export class World {
     b.progress += DT / r.time;
     if (b.progress >= 1) {
       b.progress = 0;
-      for (const [k, v] of Object.entries(r.outputs)) b.outBuf[k] = (b.outBuf[k] ?? 0) + v;
+      for (const [k, v] of Object.entries(r.outputs)) { b.outBuf[k] = (b.outBuf[k] ?? 0) + v; this.stats.produce(k, v); }
     }
   }
 
@@ -1258,7 +1278,7 @@ export class World {
     if (t % 4 === 0) {
       for (const b of this.buildings.values()) {
         if (isBelt(b.type)) continue;
-        const key = JSON.stringify([b.status, b.inBuf, b.outBuf, Math.round(b.progress * 50), b.recipe, b.storage, b.tripped, b.items?.length, Math.round(b.fuel ?? 0), b.filters]);
+        const key = JSON.stringify([b.status, b.inBuf, b.outBuf, Math.round(b.progress * 50), b.recipe, b.storage, b.tripped, b.items?.length, Math.round(b.fuel ?? 0), b.filters, Math.round((b.eff ?? 0) * 20)]);
         if (this.lastSent.get(b.id) !== key) { this.lastSent.set(b.id, key); this.changed.add(b.id); }
       }
     }
@@ -1277,6 +1297,7 @@ export class World {
       this.out.push({ t: 'nests', nests: this.nestsState() });
     }
     if (t % 20 === 0) this.out.push({ t: 'power', nets: this.netInfo });
+    if (t % 40 === 0) this.out.push({ t: 'stats', ...this.stats.snapshot() });
   }
 
   private prevBelts = new Set<number>();

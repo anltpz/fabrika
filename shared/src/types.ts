@@ -39,6 +39,8 @@ export interface BuildingState {
   items?: BeltItem[];
   /** Ayırıcı / depo için sıradaki çıkış */
   rr?: number;
+  /** Son ~15 sn'deki çalışma oranı (0..1) */
+  eff?: number;
   /** Akıllı ayırıcı filtreleri: [ön, sol, sağ] */
   filters?: string[];
   /** Direk sigortası */

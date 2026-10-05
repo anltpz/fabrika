@@ -61,6 +61,7 @@ export type ServerMsg =
   | { t: 'trees'; removed: number[] }
   | { t: 'nests'; nests: NestState[] }
   | { t: 'power'; nets: PowerNetInfo[] }
+  | { t: 'stats'; produced: Record<string, number>; consumed: Record<string, number> }
   | { t: 'fx'; kind: 'hit' | 'swing' | 'death' | 'enemyDeath' | 'harvest' | 'build'; x: number; y: number; angle?: number; by?: number }
   | { t: 'toast'; msg: string; kind?: 'info' | 'warn' | 'good' }
   | { t: 'pong'; time: number };
