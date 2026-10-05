@@ -7,7 +7,7 @@ export interface PortDef {
   dir: Dir;
 }
 
-export type BuildingCategory = 'uretim' | 'lojistik' | 'enerji' | 'ozel';
+export type BuildingCategory = 'uretim' | 'lojistik' | 'sivi' | 'enerji' | 'ozel';
 
 export interface BuildingDef {
   id: string;
@@ -34,8 +34,17 @@ export interface BuildingDef {
   beltSpeed?: number;
   /** Maden çıkarma hızı (adet/dk, normal saflıkta) */
   mineRate?: number;
-  /** Sıvı çıkarma hızı (birim/dk, normal saflıkta) */
+  /** Sıvı çıkarma hızı (birim/dk, normal saflıkta); petrol düğümüne kurulur */
   pumpRate?: number;
+  /** Su çıkarıcı: tamamen suyun üzerine kurulur, bu hızda (birim/dk) su verir */
+  waterRate?: number;
+  /** Sıvı giriş/çıkış portları (borulara bağlanır) */
+  fluidIn?: PortDef[];
+  fluidOut?: PortDef[];
+  /** Her yandan boruya bağlanır (sıvı deposu, boru) */
+  fluidAll?: boolean;
+  /** Sıvı kapasitesi (boru/depo) */
+  fluidCap?: number;
   /** Tarif seçebilen üretim makinesi mi */
   crafter?: boolean;
   short: string;
@@ -136,6 +145,36 @@ const list: BuildingDef[] = [
     inputs: [{ x: 0, y: 0, dir: 2 }], outputs: [{ x: 1, y: 0, dir: 0 }], unlock: 0, buildable: true, short: 'DPO',
   },
   {
+    id: 'water_extractor', name: 'Su Çıkarıcı', desc: 'Suyun üzerine kurulur. 120 su/dk pompalar.',
+    w: 2, h: 2, cost: { steel_pipe: 10, rotor: 5, reinforced_plate: 10 }, category: 'sivi', color: 0x3a7ac0, power: 20, waterRate: 120,
+    inputs: [], outputs: [], fluidOut: [{ x: 1, y: 0, dir: 0 }], unlock: 5, buildable: true, short: 'SU',
+  },
+  {
+    id: 'oil_extractor', name: 'Petrol Kuyusu', desc: 'Petrol düğümünün üzerine kurulur. 60 ham petrol/dk (normal).',
+    w: 2, h: 2, cost: { motor: 5, steel_pipe: 20, concrete: 40 }, category: 'sivi', color: 0x4a3a5a, power: 40, pumpRate: 60,
+    inputs: [], outputs: [], fluidOut: [{ x: 1, y: 0, dir: 0 }], unlock: 5, buildable: true, short: 'PTR',
+  },
+  {
+    id: 'pipe', name: 'Boru', desc: 'Komşu borulara ve sıvı portlarına kendiliğinden bağlanır. Bağlı borular tek bir sıvı hattıdır.',
+    w: 1, h: 1, cost: { steel_pipe: 1 }, category: 'sivi', color: 0x7a8a9a, walkable: true, fluidAll: true, fluidCap: 20,
+    inputs: [], outputs: [], unlock: 5, buildable: true, short: 'BRU',
+  },
+  {
+    id: 'fluid_tank', name: 'Sıvı Deposu', desc: '400 birim sıvı tutar, her yandan boruya bağlanır.',
+    w: 2, h: 2, cost: { aluminum_sheet: 10, steel_pipe: 10 }, category: 'sivi', color: 0x5a7a9a, fluidAll: true, fluidCap: 400,
+    inputs: [], outputs: [], unlock: 5, buildable: true, short: 'TNK',
+  },
+  {
+    id: 'refinery', name: 'Rafineri', desc: 'Ham petrolü plastik, kauçuk veya yakıta işler.',
+    w: 3, h: 2, cost: { motor: 10, modular_frame: 10, steel_pipe: 30, aluminum_sheet: 10 }, category: 'sivi', color: 0xb06a2a, power: 30, crafter: true,
+    inputs: [], outputs: [{ x: 2, y: 0, dir: 0 }], fluidIn: [{ x: 0, y: 0, dir: 2 }], fluidOut: [{ x: 2, y: 1, dir: 0 }], unlock: 5, buildable: true, short: 'RFN',
+  },
+  {
+    id: 'fuel_generator', name: 'Yakıt Jeneratörü', desc: 'Yakıt yakarak 150 MW üretir (12 yakıt/dk).',
+    w: 3, h: 2, cost: { motor: 15, aluminum_sheet: 20, steel_beam: 20, rubber: 20 }, category: 'enerji', color: 0xc08a2a, powerGen: 150,
+    fuels: ['fuel'], inputs: [], outputs: [], fluidIn: [{ x: 0, y: 0, dir: 2 }], unlock: 5, buildable: true, short: 'YKT',
+  },
+  {
     id: 'crate', name: 'Eşya Sandığı', desc: 'Düşen eşyalar.',
     w: 1, h: 1, cost: {}, category: 'ozel', color: 0x6a4a2a, walkable: true, inputs: [], outputs: [], unlock: -1, buildable: false, short: 'SND',
   },
@@ -147,6 +186,7 @@ export const BUILDING_LIST = list;
 export const CATEGORY_NAMES: Record<BuildingCategory, string> = {
   uretim: 'Üretim',
   lojistik: 'Lojistik',
+  sivi: 'Sıvılar',
   enerji: 'Enerji',
   ozel: 'Özel',
 };
@@ -170,9 +210,9 @@ export function footprint(type: string, x: number, y: number, rot: number): Arra
   return out;
 }
 
-export function worldPorts(type: string, x: number, y: number, rot: number, kind: 'inputs' | 'outputs'): WorldPort[] {
+export function worldPorts(type: string, x: number, y: number, rot: number, kind: 'inputs' | 'outputs' | 'fluidIn' | 'fluidOut'): WorldPort[] {
   const def = BUILDINGS[type];
-  return def[kind].map((p) => {
+  return (def[kind] ?? []).map((p) => {
     const [lx, ly] = rotateLocal(p.x, p.y, def.w, def.h, rot);
     return { x: x + lx, y: y + ly, dir: rotDir(p.dir, rot) };
   });

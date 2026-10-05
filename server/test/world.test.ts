@@ -330,6 +330,69 @@ describe('işaretler', () => {
   });
 });
 
+describe('sıvılar', () => {
+  it('su çıkarıcı sadece suya kurulur ve boru hattını doldurur', () => {
+    const { w, p } = setup();
+    const x = Math.floor(p.x) + 6, y = Math.floor(p.y) - 4;
+    clearArea(w, x - 2, y - 2, x + 10, y + 6);
+    p.x = x + 5; p.y = y + 5.5;
+    expect(w.canPlace('water_extractor', x, y, 0)).toContain('suyun üzerine');
+    for (const [tx, ty] of [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]]) w.map.terrain[ty * w.map.size + tx] = Terrain.Water;
+    expect(w.build(p.id, 'water_extractor', x, y, 0)).toBe(true);
+    w.buildBelts; // boru çizimi
+    for (const i of [2, 3]) expect(w.build(p.id, 'pipe', x + i, y, 0)).toBe(true);
+    expect(w.build(p.id, 'fluid_tank', x + 4, y, 0)).toBe(true);
+    // Enerji
+    w.build(p.id, 'biomass_burner', x, y + 3, 0);
+    w.build(p.id, 'power_pole', x + 3, y + 2, 0);
+    w.buildingAt(x, y + 3)!.inBuf.biomass = 50;
+    run(w, 10);
+    const info = w.fluidInfo();
+    expect(info.length).toBe(1);
+    expect(info[0].fluid).toBe('water');
+    // 120/dk * 10 sn = 20 birim
+    expect(info[0].amount).toBeGreaterThan(15);
+    expect(info[0].capacity).toBe(440);
+    // Kaydet/yükle: içerik korunur
+    const w2 = World.fromSave(JSON.parse(JSON.stringify(w.serialize())));
+    run(w2, 0.1);
+    expect(w2.fluidInfo()[0].amount).toBeGreaterThan(15);
+  });
+
+  it('petrol → rafineri (yakıt) → yakıt jeneratörü elektrik üretir', () => {
+    const { w, p } = setup();
+    const oil = w.map.nodes.find((n) => n.item === 'crude_oil')!;
+    const x = oil.x, y = oil.y;
+    clearArea(w, x - 2, y - 3, x + 16, y + 8);
+    w.map.nodeAt.set(tileKey(x, y), oil);
+    p.x = x + 7; p.y = y + 7.5;
+    expect(w.build(p.id, 'oil_extractor', x, y, 0)).toBe(true); // çıkış (x+2, y)
+    w.build(p.id, 'pipe', x + 2, y, 0);
+    w.build(p.id, 'pipe', x + 3, y, 0);
+    expect(w.build(p.id, 'refinery', x + 4, y, 0)).toBe(true); // sıvı giriş (x+3,y), sıvı çıkış (x+7, y+1)
+    const ref = w.buildingAt(x + 4, y)!;
+    w.setRecipe(p.id, ref.id, 'fuel');
+    w.build(p.id, 'pipe', x + 7, y + 1, 0);
+    w.build(p.id, 'pipe', x + 8, y + 1, 0);
+    expect(w.build(p.id, 'fuel_generator', x + 9, y + 1, 0)).toBe(true); // sıvı giriş (x+8, y+1)
+    // Başlatma enerjisi: 3 biyokütle jeneratörü (90 MW) kuyu + rafineri (70 MW) için yeterli
+    for (const i of [0, 2, 4]) {
+      w.build(p.id, 'biomass_burner', x + i * 2 - 2, y + 4, 0);
+      w.buildingAt(x + i * 2 - 2, y + 4)!.inBuf.biomass = 50;
+    }
+    w.build(p.id, 'power_pole', x + 4, y + 3, 0);
+    w.build(p.id, 'power_pole', x + 10, y + 4, 0);
+    run(w, 40);
+    const gen = w.buildingAt(x + 9, y + 1)!;
+    expect(ref.status === 'working' || ref.status === 'full').toBe(true);
+    expect(w.stats.snapshot().produced.fuel).toBeGreaterThan(0);
+    expect((gen.inBuf.fuel ?? 0) + (gen.fuel ?? 0)).toBeGreaterThan(0);
+    expect(gen.status).toBe('working');
+    const net = w.netInfo.find((n) => n.capacity >= 150);
+    expect(net).toBeTruthy();
+  });
+});
+
 describe('keşif', () => {
   it('başlangıçta sadece merkez açık, oyuncu yürüdükçe sis açılır', () => {
     const { w, p } = setup();

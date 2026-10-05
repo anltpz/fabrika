@@ -16,6 +16,7 @@ import {
   opposite,
 } from '@fabrika/shared';
 import type { BuildingDef, BuildingState, PortDef, ServerMsg } from '@fabrika/shared';
+import { pipeMask } from '../state';
 import type { GameState } from '../state';
 import { TEX_PX, drawChunk } from './terrain';
 
@@ -166,16 +167,17 @@ export class Renderer {
       const cur = this.state.buildings.get(b.id);
       if (cur) this.updateBuilding(cur);
     }
-    // Bant eklenip kalkınca komşu köşelerin şekli değişebilir
-    if (upsert.some((b) => isBelt(b.type)) || remove.length) {
-      for (const b of this.state.buildings.values()) if (isBelt(b.type)) this.updateBuilding(b);
+    // Bant/boru eklenip kalkınca komşuların şekli değişebilir
+    if (upsert.some((b) => isBelt(b.type) || b.type === 'pipe' || BUILDINGS[b.type].fluidIn || BUILDINGS[b.type].fluidOut || BUILDINGS[b.type].fluidAll || BUILDINGS[b.type].outputs.length) || remove.length) {
+      for (const b of this.state.buildings.values()) if (isBelt(b.type) || BUILDINGS[b.type].fluidAll) this.updateBuilding(b);
     }
     if (upsert.some((b) => b.type === 'power_pole' || BUILDINGS[b.type].power || BUILDINGS[b.type].powerGen) || remove.length) this.drawPowerLines();
   }
 
   private updateBuilding(b: BuildingState) {
     const curve = isBelt(b.type) ? this.state.beltCurve(b) : 0;
-    const key = `${b.type}:${b.x}:${b.y}:${b.rot}:${curve}`;
+    const extra = b.type === 'pipe' || b.type === 'fluid_tank' ? `:${pipeMask(this.state, b)}:${this.state.fluids.get(b.fnet ?? -1)?.fluid ?? ''}` : '';
+    const key = `${b.type}:${b.x}:${b.y}:${b.rot}:${curve}${extra}`;
     let v = this.views.get(b.id);
     if (v && v.key !== key) { v.root.destroy({ children: true }); this.views.delete(b.id); v = undefined; }
     if (!v) {
@@ -210,6 +212,13 @@ export class Renderer {
       this.beltLayer.addChild(root);
       return view;
     }
+    if (b.type === 'pipe') {
+      body.rotation = 0;
+      const fluid = this.state.fluids.get(b.fnet ?? -1)?.fluid;
+      drawPipe(g, pipeMask(this.state, b), fluid ? ITEMS[fluid].color : null);
+      this.beltLayer.addChild(root);
+      return view;
+    }
     drawBuildingBody(g, def, view);
     root.addChild(view.status);
     view.status.position.set(W / 2 - 0.22, -H / 2 + 0.22);
@@ -225,6 +234,11 @@ export class Renderer {
     }
     this.buildingLayer.addChild(root);
     return view;
+  }
+
+  /** Sıvı hatlarının rengi değişince boruları yenile */
+  refreshPipes() {
+    for (const b of this.state.buildings.values()) if (BUILDINGS[b.type].fluidAll) this.updateBuilding(b);
   }
 
   drawPowerLines() {
@@ -717,7 +731,37 @@ function portPos(def: BuildingDef, p: PortDef): [number, number] {
   return [p.x + 0.5 - def.w / 2 + DX[p.dir] * 0.5, p.y + 0.5 - def.h / 2 + DY[p.dir] * 0.5];
 }
 
+function drawFluidPorts(g: Graphics, def: BuildingDef) {
+  for (const [list, col] of [[def.fluidIn ?? [], 0x4fb3ff], [def.fluidOut ?? [], 0x7ae0ff]] as const) {
+    for (const p of list) {
+      const [x, y] = portPos(def, p);
+      g.circle(x, y, 0.2).fill(0x10202e).stroke({ width: 0.05, color: col });
+      g.circle(x, y, 0.09).fill(col);
+    }
+  }
+}
+
+function drawPipe(g: Graphics, mask: number, color: number | null) {
+  const c = color ?? 0x6a7a8a;
+  const w = 0.32;
+  // Merkez bağlantı
+  g.roundRect(-w / 2 - 0.04, -w / 2 - 0.04, w + 0.08, w + 0.08, 0.08).fill(0x3a4450);
+  for (let d = 0; d < 4; d++) {
+    if (!(mask & (1 << d))) continue;
+    const dx = DX[d], dy = DY[d];
+    const x0 = dx === 0 ? -w / 2 : dx > 0 ? 0 : -0.5;
+    const y0 = dy === 0 ? -w / 2 : dy > 0 ? 0 : -0.5;
+    g.rect(x0, y0, dx === 0 ? w : 0.5, dy === 0 ? w : 0.5).fill(0x8a9aaa);
+    // Flanş
+    g.rect(dx === 0 ? -w / 2 - 0.05 : dx > 0 ? 0.4 : -0.5, dy === 0 ? -w / 2 - 0.05 : dy > 0 ? 0.4 : -0.5, dx === 0 ? w + 0.1 : 0.1, dy === 0 ? w + 0.1 : 0.1).fill(0x5a6a7a);
+  }
+  if (!mask) g.rect(-0.4, -w / 2, 0.8, w).fill(0x8a9aaa);
+  // Sıvı rengi
+  g.circle(0, 0, 0.11).fill(c);
+}
+
 function drawPorts(g: Graphics, def: BuildingDef) {
+  drawFluidPorts(g, def);
   for (const p of def.inputs) {
     const [x, y] = portPos(def, p);
     const d = opposite(p.dir);
@@ -832,6 +876,35 @@ function drawBuildingBody(g: Graphics, def: BuildingDef, view: BuildingView) {
       }
       break;
     }
+    case 'fluid_tank': {
+      g.circle(0, 0, 0.78).fill(0x3a4a5a).stroke({ width: 0.06, color: 0x1a1a1a });
+      g.circle(0, 0, 0.6).fill(darken(c, 1.1));
+      g.moveTo(-0.6, 0).lineTo(0.6, 0).moveTo(0, -0.6).lineTo(0, 0.6).stroke({ width: 0.04, color: 0x2a3a4a });
+      break;
+    }
+    case 'water_extractor':
+    case 'oil_extractor': {
+      const s = new Graphics();
+      s.rect(-0.12, -0.6, 0.24, 1.2).fill(0x2a2a2a);
+      s.rect(-0.6, -0.12, 1.2, 0.24).fill(0x2a2a2a);
+      s.circle(0, 0, 0.22).fill(def.id === 'water_extractor' ? 0x4fb3ff : 0x5a3a6a).stroke({ width: 0.04, color: 0x111111 });
+      g.parent!.addChild(s);
+      view.spinner = s;
+      break;
+    }
+    case 'refinery': {
+      for (const [cx, r] of [[-0.8, 0.32], [0, 0.42], [0.8, 0.3]] as const) {
+        g.circle(cx, -0.1, r).fill(0x5a5a5a).stroke({ width: 0.04, color: 0x1a1a1a });
+        g.circle(cx, -0.1, r * 0.5).fill(0x2a2a2a);
+      }
+      const glow = new Graphics();
+      glow.circle(0, -0.1, 0.15).fill(0xff9a30);
+      glow.alpha = 0.1;
+      g.parent!.addChild(glow);
+      view.glow = glow;
+      break;
+    }
+    case 'fuel_generator':
     case 'biomass_burner':
     case 'coal_generator': {
       g.circle(x0 + w - 0.55, y0 + 0.55, 0.32).fill(0x333333).stroke({ width: 0.05, color: 0x111111 });

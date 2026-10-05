@@ -92,6 +92,7 @@ import type {
 } from '@fabrika/shared';
 import { computeNetworks, PowerNetwork } from './power';
 import { ProductionStats } from './stats';
+import { computeFluidNetworks, FluidGraph } from './fluids';
 
 export interface PlayerData {
   id: number;
@@ -189,6 +190,8 @@ export class World {
   private fogPending: number[] = [];
   private grassPending: number[] = [];
   private lootDirty = false;
+  private fluidDirty = true;
+  private fluid: FluidGraph = { nets: new Map(), portNet: new Map(), memberNet: new Map() };
   private lastPing = new Map<number, number>();
 
   /** Güç ağları önbelleği */
@@ -267,6 +270,7 @@ export class World {
   }
 
   serialize(): SaveData {
+    this.fluidWriteback();
     return {
       version: 1,
       seed: this.seed,
@@ -356,6 +360,7 @@ export class World {
     for (const [x, y] of footprint(b.type, b.x, b.y, b.rot)) this.occ.set(tileKey(x, y), b.id);
     const def = BUILDINGS[b.type];
     if (def.power || def.powerGen || b.type === 'power_pole') this.powerDirty = true;
+    if (def.fluidAll || def.fluidIn || def.fluidOut) this.fluidDirty = true;
     this.markChanged(b.id);
   }
 
@@ -372,6 +377,7 @@ export class World {
     }
     const def = BUILDINGS[b.type];
     if (def.power || def.powerGen || b.type === 'power_pole') this.powerDirty = true;
+    if (def.fluidAll || def.fluidIn || def.fluidOut) { this.fluidWriteback(); this.fluidDirty = true; }
     this.changed.delete(b.id);
     this.lastSent.delete(b.id);
     this.beltsWithItems.delete(b.id);
@@ -386,7 +392,9 @@ export class World {
     const tiles = footprint(type, x, y, rot);
     let nodeCount = 0;
     for (const [tx, ty] of tiles) {
-      if (!terrainBuildable(this.map, tx, ty)) return 'Bu zemine inşa edilemez';
+      if (def.waterRate) {
+        if (tx < 0 || ty < 0 || tx >= this.map.size || ty >= this.map.size || this.map.terrain[ty * this.map.size + tx] !== Terrain.Water) return 'Su çıkarıcı tamamen suyun üzerine kurulmalı';
+      } else if (!terrainBuildable(this.map, tx, ty)) return 'Bu zemine inşa edilemez';
       if (hasTree(this.map, tx, ty)) return 'Önce ağacı kes';
       const other = this.buildingAt(tx, ty);
       if (other && !(allowReplaceBelt && isBelt(other.type) && isBelt(type))) return 'Alan dolu';
@@ -1038,7 +1046,9 @@ export class World {
     this.time += DT;
     this.updatePlayers();
     this.updatePower();
+    this.updateFluidGraph();
     this.updateMachines();
+    this.updateFluidFlow();
     this.updateLogistics();
     this.updateEnemies();
     this.updateEfficiency();
@@ -1148,7 +1158,7 @@ export class World {
 
   private hasFuel(b: BuildingState): boolean {
     const def = BUILDINGS[b.type];
-    return (def.fuels ?? []).some((f) => (b.inBuf[f] ?? 0) > 0);
+    return (def.fuels ?? []).some((f) => (b.inBuf[f] ?? 0) >= 1);
   }
 
   private burnFuel(g: BuildingState, load: number, tripped: boolean) {
@@ -1158,10 +1168,10 @@ export class World {
     let need = def.powerGen! * load * DT;
     while (need > 0) {
       if ((g.fuel ?? 0) <= 0) {
-        const f = (def.fuels ?? []).find((x) => (g.inBuf[x] ?? 0) > 0);
+        const f = (def.fuels ?? []).find((x) => (g.inBuf[x] ?? 0) >= 1);
         if (!f) break;
         g.inBuf[f]--;
-        if (g.inBuf[f] <= 0) delete g.inBuf[f];
+        if (g.inBuf[f] <= 1e-9) delete g.inBuf[f];
         g.fuel = (g.fuel ?? 0) + (ITEMS[f].energy ?? 0);
         this.stats.consume(f, 1);
       }
@@ -1180,6 +1190,11 @@ export class World {
   private wantsPower(b: BuildingState): boolean {
     const def = BUILDINGS[b.type];
     if (def.mineRate) return sumBuf(b.outBuf) < MACHINE_OUT_CAP && !!this.findMinerNode(b);
+    if (def.waterRate || def.pumpRate) {
+      const net = this.portNetwork(b, 'out', 0);
+      const fluid = def.waterRate ? 'water' : this.findMinerNode(b)?.item;
+      return !!net && !!fluid && (net.fluid === null || net.fluid === fluid) && net.amount < net.capacity - 1e-6;
+    }
     if (def.crafter) {
       if (!b.recipe) return false;
       const r = RECIPES[b.recipe];
@@ -1206,6 +1221,7 @@ export class World {
     for (const b of this.buildings.values()) {
       const def = BUILDINGS[b.type];
       if (def.mineRate) this.updateMiner(b, def.mineRate);
+      else if (def.waterRate || def.pumpRate) this.updateExtractor(b);
       else if (def.crafter) this.updateCrafter(b);
     }
   }
@@ -1245,6 +1261,98 @@ export class World {
       b.progress = 0;
       for (const [k, v] of Object.entries(r.outputs)) { b.outBuf[k] = (b.outBuf[k] ?? 0) + v; this.stats.produce(k, v); }
     }
+  }
+
+  // ---------------------------------------------------------------- sıvılar
+
+  private portNetwork(b: BuildingState, kind: 'in' | 'out', i: number) {
+    const id = this.fluid.portNet.get(`${b.id}:${kind}:${i}`);
+    return id === undefined ? undefined : this.fluid.nets.get(id);
+  }
+
+  /** Hat içeriklerini boru/depolara geri yazar (yeniden hesaplama ve kayıt öncesi) */
+  private fluidWriteback() {
+    for (const net of this.fluid.nets.values()) {
+      for (const id of net.members) {
+        const c = this.buildings.get(id);
+        if (!c) continue;
+        const cap = BUILDINGS[c.type].fluidCap ?? 0;
+        c.fluidType = net.fluid ?? undefined;
+        c.fluidAmt = net.capacity > 0 ? (net.amount * cap) / net.capacity : 0;
+      }
+    }
+  }
+
+  private updateFluidGraph() {
+    if (!this.fluidDirty) return;
+    this.fluidDirty = false;
+    this.fluid = computeFluidNetworks(this.buildings.values(), (x, y) => this.buildingAt(x, y));
+    for (const [id, net] of this.fluid.memberNet) {
+      const b = this.buildings.get(id);
+      if (b && b.fnet !== net) { b.fnet = net; this.markChanged(id); }
+    }
+  }
+
+  private updateExtractor(b: BuildingState) {
+    const def = BUILDINGS[b.type];
+    const fluid = def.waterRate ? 'water' : this.findMinerNode(b)?.item;
+    if (!fluid) { this.setStatus(b, 'noinput'); return; }
+    const net = this.portNetwork(b, 'out', 0);
+    if (!net) { this.setStatus(b, 'unpaired'); return; }
+    if ((net.fluid !== null && net.fluid !== fluid) || net.amount >= net.capacity - 1e-6) { this.setStatus(b, 'full'); return; }
+    if (!this.powered.has(b.id)) { this.setStatus(b, this.netTripped(b) ? 'tripped' : 'nopower'); return; }
+    const node = def.pumpRate ? this.findMinerNode(b) : undefined;
+    const rate = def.waterRate ?? (def.pumpRate ?? 0) * (node ? PURITY_MULT[node.purity] : 1);
+    const add = Math.min((rate / 60) * DT, net.capacity - net.amount);
+    net.fluid = fluid;
+    net.amount += add;
+    b.progress = (b.progress + add) % 1;
+    this.stats.produce(fluid, add);
+    this.setStatus(b, 'working');
+  }
+
+  /** Makineler hatlardan sıvı çeker ve sıvı çıktılarını hatlara basar */
+  private updateFluidFlow() {
+    for (const b of this.buildings.values()) {
+      const def = BUILDINGS[b.type];
+      if (def.fluidIn) {
+        const net = this.portNetwork(b, 'in', 0);
+        if (net && net.fluid && net.amount > 0) {
+          let need = 0;
+          if (def.crafter && b.recipe) {
+            const r = RECIPES[b.recipe];
+            const per = r.inputs[net.fluid];
+            if (per) need = inCap(per) - (b.inBuf[net.fluid] ?? 0);
+          } else if (def.fuels?.includes(net.fluid)) {
+            need = GEN_FUEL_CAP - sumBuf(b.inBuf);
+          }
+          const take = Math.min(Math.max(0, need), net.amount);
+          if (take > 0) {
+            b.inBuf[net.fluid] = (b.inBuf[net.fluid] ?? 0) + take;
+            net.amount -= take;
+            if (net.amount <= 1e-6) { net.amount = 0; net.fluid = null; }
+          }
+        }
+      }
+      if (def.fluidOut && def.crafter) {
+        const net = this.portNetwork(b, 'out', 0);
+        if (!net) continue;
+        for (const [k, v] of Object.entries(b.outBuf)) {
+          if (!isFluid(k) || v <= 0) continue;
+          if (net.fluid !== null && net.fluid !== k) continue;
+          const put = Math.min(v, net.capacity - net.amount);
+          if (put <= 0) continue;
+          net.fluid = k;
+          net.amount += put;
+          b.outBuf[k] -= put;
+          if (b.outBuf[k] <= 1e-6) delete b.outBuf[k];
+        }
+      }
+    }
+  }
+
+  fluidInfo() {
+    return [...this.fluid.nets.values()].map((n) => ({ id: n.id, fluid: n.fluid, amount: Math.round(n.amount * 10) / 10, capacity: n.capacity }));
   }
 
   // ---------------------------------------------------------------- lojistik
@@ -1376,7 +1484,7 @@ export class World {
         }
       } else {
         for (const p of ports) {
-          const item = Object.keys(b.outBuf).find((k) => b.outBuf[k] > 0);
+          const item = Object.keys(b.outBuf).find((k) => b.outBuf[k] >= 1 && !isFluid(k));
           if (!item) break;
           if (this.tryInsert(p.x, p.y, p.dir, item)) {
             b.outBuf[item]--;
@@ -1509,6 +1617,7 @@ export class World {
       this.out.push({ t: 'nests', nests: this.nestsState() });
     }
     if (t % 20 === 0) this.out.push({ t: 'power', nets: this.netInfo });
+    if (t % 20 === 10) this.out.push({ t: 'fluids', nets: this.fluidInfo() });
     if (t % 40 === 0) this.out.push({ t: 'stats', ...this.stats.snapshot() });
   }
 

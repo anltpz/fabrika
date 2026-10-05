@@ -1,5 +1,5 @@
 import type { Blueprint } from './blueprints';
-import type { BuildingState, CraftJob, EnemyState, MapMarker, NestState, PlayerPublic, PowerNetInfo, Slot, TechState } from './types';
+import type { BuildingState, CraftJob, EnemyState, FluidNetInfo, MapMarker, NestState, PlayerPublic, PowerNetInfo, Slot, TechState } from './types';
 
 export interface InputState {
   up: boolean;
@@ -76,6 +76,7 @@ export type ServerMsg =
   | { t: 'blueprints'; list: Blueprint[] }
   | { t: 'markers'; list: MapMarker[] }
   | { t: 'fog'; cells: number[] }
+  | { t: 'fluids'; nets: FluidNetInfo[] }
   | { t: 'terrain'; grass: number[] }
   | { t: 'loot'; opened: number[] }
   | { t: 'mapPing'; x: number; y: number; by: number; name: string; color: number }

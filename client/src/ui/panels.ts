@@ -13,6 +13,8 @@ import {
   blueprintCost,
   SPLITTER_FILTERS,
   STATUS_NAMES,
+  DX,
+  DY,
   countItem,
   footprint,
   handCraftTime,
@@ -22,6 +24,7 @@ import {
   milestoneUnlocks,
   recipesFor,
   tileKey,
+  worldPorts,
 } from '@fabrika/shared';
 import type { BuildingCategory, BuildingState, ClientMsg } from '@fabrika/shared';
 import type { GameState } from '../state';
@@ -126,7 +129,7 @@ export class Panels {
   // ------------------------------------------------------------ inşa menüsü
 
   private renderBuild(): HTMLElement {
-    const cats: BuildingCategory[] = ['uretim', 'lojistik', 'enerji', 'ozel'];
+    const cats: BuildingCategory[] = ['uretim', 'lojistik', 'sivi', 'enerji', 'ozel'];
     const tabs = h('div', { class: 'tabs' }, ...cats.map((c) => h('button', { class: this.buildTab === c ? 'on' : '', onclick: () => { this.buildTab = c; this.render(); } }, CATEGORY_NAMES[c])));
     const grid = h('div', { class: 'build-grid' });
     for (const def of BUILDING_LIST) {
@@ -496,7 +499,7 @@ export class Panels {
     const def = BUILDINGS[b.type];
     if (b.type === 'hub') return this.renderHub();
     const body = h('div');
-    const statusPill = (def.crafter || def.mineRate || def.powerGen || b.type.startsWith('underground'))
+    const statusPill = (def.crafter || def.mineRate || def.powerGen || def.waterRate || def.pumpRate || b.type.startsWith('underground'))
       ? h('span', { class: 'status-pill' }, h('span', { class: 'dot', style: { background: STATUS_DOT[b.status] ?? '#999' } }), STATUS_NAMES[b.status])
       : null;
     const dismantle = h('button', { class: 'ghost small', onclick: () => { this.send({ t: 'dismantle', id: b.id }); this.close(); } }, 'Sök');
@@ -518,11 +521,13 @@ export class Panels {
       : null;
     body.append(h('div', { class: 'machine-head' }, statusPill, effLine, fuseBtn), powerLine ?? h('div'));
 
-    if (def.crafter) body.append(this.crafterSection(b));
+    if (def.crafter) body.append(this.crafterSection(b), def.fluidIn || def.fluidOut ? this.machineFluidSection(b) : h('div'));
     else if (def.mineRate) body.append(this.minerSection(b, def.mineRate));
     else if (def.powerGen) body.append(this.generatorSection(b));
     else if (b.type === 'storage' || b.type === 'crate') body.append(this.storageSection(b));
     else if (b.type === 'smart_splitter') body.append(this.filterSection(b));
+    else if (def.waterRate || def.pumpRate) body.append(this.extractorSection(b));
+    else if (def.fluidAll) body.append(this.fluidNetSection(b.fnet));
     else if (b.type.startsWith('underground')) body.append(h('p', { class: 'muted' }, def.desc + ' Giriş ile çıkış arasında en fazla 5 tile olabilir; aradaki binalar ve bantlar engel olmaz.'));
     else if (b.type === 'power_pole') body.append(h('p', { class: 'muted' }, 'Direkler 5 tile yarıçapındaki binalara güç verir ve 12 tile içindeki diğer direklere otomatik bağlanır.'));
     else if (b.type === 'workbench') body.append(h('p', { class: 'muted' }, 'Yakınındayken envanterinden (Tab) elle üretim yapabilirsin.'), h('button', { onclick: () => this.open('inventory') }, 'Envanteri Aç'));
@@ -535,11 +540,11 @@ export class Panels {
     const items = h('div', { class: 'items' });
     const entries = Object.entries(buf).filter(([, n]) => n > 0);
     if (!entries.length) items.append(h('span', { class: 'muted' }, 'Boş'));
-    for (const [item, n] of entries) items.append(h('div', { class: 'it' }, icon(item), itemName(item), h('span', { class: 'n' }, String(n))));
+    for (const [item, n] of entries) items.append(h('div', { class: 'it' }, icon(item), itemName(item), h('span', { class: 'n' }, fmt(Math.round(n * 10) / 10))));
     return h('div', { class: 'buf' },
       h('h3', {}, title),
       items,
-      entries.length ? h('button', { class: 'small', style: { marginTop: '8px' }, onclick: () => this.send({ t: 'take', id, from }) }, 'Hepsini Al') : null,
+      entries.some(([k]) => !ITEMS[k].fluid) ? h('button', { class: 'small', style: { marginTop: '8px' }, onclick: () => this.send({ t: 'take', id, from }) }, 'Hepsini Al') : null,
       extra ?? null,
     );
   }
@@ -606,6 +611,53 @@ export class Panels {
     });
     wrap.append(h('p', { class: 'muted', style: { fontSize: '12px', marginTop: '10px' } },
       'Belirli eşya: sadece o eşya. Herhangi: her şey. Tanımsız diğerleri: hiçbir çıkışta filtrelenmemiş eşyalar. Taşma: diğer çıkışlar doluyken kullanılır. Kapalı: hiçbir şey çıkmaz.'));
+    return wrap;
+  }
+
+  private fluidNetSection(id: number | undefined): HTMLElement {
+    const n = id !== undefined ? this.state.fluids.get(id) : undefined;
+    if (!n) return h('p', { class: 'muted' }, 'Sıvı hattı bilgisi bekleniyor...');
+    const pct = n.capacity ? (100 * n.amount) / n.capacity : 0;
+    return h('div', {},
+      h('div', { class: 'section-title' }, 'Sıvı Hattı'),
+      h('div', { class: 'kv', style: { marginBottom: '8px' } },
+        h('span', { class: 'k' }, 'İçerik'), h('span', {}, n.fluid ? itemName(n.fluid) : 'Boş'),
+        h('span', { class: 'k' }, 'Doluluk'), h('span', {}, `${fmt(Math.round(n.amount))} / ${n.capacity}`),
+      ),
+      h('div', { class: 'progress' }, h('div', { style: { width: `${pct}%`, background: n.fluid ? hex(ITEMS[n.fluid].color) : '' } })),
+    );
+  }
+
+  private machineFluidSection(b: BuildingState): HTMLElement {
+    const def = BUILDINGS[b.type];
+    const wrap = h('div');
+    const nets = new Set<number>();
+    // Portun önündeki boru/depo hangi hatta?
+    for (const kind of ['fluidIn', 'fluidOut'] as const) {
+      for (const p of worldPorts(b.type, b.x, b.y, b.rot, kind)) {
+        const nb = this.state.buildingAt(p.x + DX[p.dir], p.y + DY[p.dir]);
+        if (nb && BUILDINGS[nb.type].fluidAll && nb.fnet !== undefined) nets.add(nb.fnet);
+      }
+    }
+    void def;
+    if (!nets.size) wrap.append(h('p', { class: 'bad', style: { fontSize: '12px' } }, 'Sıvı portlarına boru bağlı değil (mavi daireler).'));
+    for (const id of nets) wrap.append(this.fluidNetSection(id));
+    return wrap;
+  }
+
+  private extractorSection(b: BuildingState): HTMLElement {
+    const def = BUILDINGS[b.type];
+    let node;
+    for (const [x, y] of footprint(b.type, b.x, b.y, b.rot)) {
+      node = this.state.map.nodeAt.get(tileKey(x, y));
+      if (node) break;
+    }
+    const rate = def.waterRate ?? (def.pumpRate ?? 0) * (node ? PURITY_MULT[node.purity] : 1);
+    const wrap = h('div', {}, h('div', { class: 'kv', style: { marginBottom: '10px' } },
+      h('span', { class: 'k' }, 'Sıvı'), h('span', {}, def.waterRate ? 'Su' : node ? `${itemName(node.item)} (${PURITY_NAMES[node.purity]})` : '-'),
+      h('span', { class: 'k' }, 'Hız'), h('span', {}, `${fmt(rate)} / dk`),
+    ));
+    wrap.append(this.machineFluidSection(b));
     return wrap;
   }
 

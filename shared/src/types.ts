@@ -39,6 +39,10 @@ export interface BuildingState {
   items?: BeltItem[];
   /** Ayırıcı / depo için sıradaki çıkış */
   rr?: number;
+  /** Boru/depo: bağlı olduğu sıvı hattı ve içerik (kayıt için) */
+  fnet?: number;
+  fluidType?: string;
+  fluidAmt?: number;
   /** Son ~15 sn'deki çalışma oranı (0..1) */
   eff?: number;
   /** Akıllı ayırıcı filtreleri: [ön, sol, sağ] */
@@ -106,3 +110,10 @@ export interface MapMarker {
 }
 
 export const MARKER_ICONS = ['📍', '⛏️', '⚠️', '🏠', '⭐', '⚡', '🐛', '🏭'];
+
+export interface FluidNetInfo {
+  id: number;
+  fluid: string | null;
+  amount: number;
+  capacity: number;
+}

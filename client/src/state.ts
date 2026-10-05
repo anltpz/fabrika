@@ -2,6 +2,7 @@ import {
   BELT_ITEM_SPACING,
   BUILDINGS,
   FOG_CELL,
+  ITEMS,
   Terrain,
   fogIndex,
   DX,
@@ -22,6 +23,7 @@ import {
 import type {
   BeltItem,
   Blueprint,
+  FluidNetInfo,
   MapMarker,
   BuildingState,
   CraftJob,
@@ -88,6 +90,7 @@ export class GameState extends Emitter {
   blueprints: Blueprint[] = [];
   markers: MapMarker[] = [];
   explored = new Uint8Array(0);
+  fluids = new Map<number, FluidNetInfo>();
   lootOpened = new Set<number>();
   pings: Array<{ x: number; y: number; color: number; name: string; t0: number }> = [];
   stats: { produced: Record<string, number>; consumed: Record<string, number> } = { produced: {}, consumed: {} };
@@ -234,6 +237,10 @@ export class GameState extends Emitter {
         this.power = msg.nets;
         this.emit('power');
         break;
+      case 'fluids':
+        this.fluids = new Map(msg.nets.map((n) => [n.id, n]));
+        this.emit('fluids');
+        break;
       case 'fog':
         for (const i of msg.cells) this.explored[i] = 1;
         this.emit('fog', msg.cells);
@@ -306,16 +313,20 @@ export class GameState extends Emitter {
     if (!isUnlocked(def.unlock, this.tech.completed)) return 'Kilitli';
     let nodes = 0;
     for (const [tx, ty] of footprint(type, x, y, rot)) {
-      if (!terrainBuildable(this.map, tx, ty)) return 'Bu zemine inşa edilemez';
+      if (def.waterRate) {
+        if (tx < 0 || ty < 0 || tx >= this.map.size || ty >= this.map.size || this.map.terrain[ty * this.map.size + tx] !== Terrain.Water) return 'Suyun üzerine kurulmalı';
+      } else if (!terrainBuildable(this.map, tx, ty)) return 'Bu zemine inşa edilemez';
       if (hasTree(this.map, tx, ty)) return 'Önce ağacı kes';
       const o = this.buildingAt(tx, ty);
       if (o && !(allowBelt && isBelt(o.type) && isBelt(type))) return 'Alan dolu';
-      if (this.map.nodeAt.has(tileKey(tx, ty))) {
-        if (!def.mineRate) return 'Kaynak düğümü';
+      const node = this.map.nodeAt.get(tileKey(tx, ty));
+      if (node) {
+        if (ITEMS[node.item].fluid ? !def.pumpRate : !def.mineRate) return 'Kaynak düğümü';
         nodes++;
       }
+      if (this.lootAt(tx, ty)) return 'Kargo';
     }
-    if (def.mineRate && !nodes) return 'Bir kaynak düğümüne kurulmalı';
+    if ((def.mineRate || def.pumpRate) && !nodes) return 'Bir kaynak düğümüne kurulmalı';
     const me = this.me();
     if (me && !skipRange) {
       const [w, h] = footprintSize(def.w, def.h, rot);
@@ -360,4 +371,20 @@ export class GameState extends Emitter {
     }
     return out;
   }
+}
+
+/** Boru bağlantı maskesi: bit d (0=D,1=G,2=B,3=K) o yöne bağlantı var */
+export function pipeMask(state: GameState, b: BuildingState): number {
+  let mask = 0;
+  for (let d = 0; d < 4; d++) {
+    const nx = b.x + DX[d], ny = b.y + DY[d];
+    const n = state.buildingAt(nx, ny);
+    if (!n) continue;
+    const def = BUILDINGS[n.type];
+    if (def.fluidAll) { mask |= 1 << d; continue; }
+    for (const kind of ['fluidIn', 'fluidOut'] as const) {
+      if (worldPorts(n.type, n.x, n.y, n.rot, kind).some((p) => p.x + DX[p.dir] === b.x && p.y + DY[p.dir] === b.y)) mask |= 1 << d;
+    }
+  }
+  return mask;
 }

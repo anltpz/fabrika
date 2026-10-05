@@ -445,9 +445,14 @@ export class Controller {
       const def = BUILDINGS[b.type];
       key = `b${b.id}:${b.status}:${b.recipe}`;
       const lines = [`<b>${def.name}</b>`];
-      if (def.crafter || def.mineRate || def.powerGen || b.type.startsWith('underground')) lines.push(STATUS_NAMES[b.status]);
+      if (def.crafter || def.mineRate || def.powerGen || def.waterRate || def.pumpRate || b.type.startsWith('underground')) lines.push(STATUS_NAMES[b.status]);
+      if (def.fluidAll) {
+        const n = this.state.fluids.get(b.fnet ?? -1);
+        lines.push(n ? `${n.fluid ? itemName(n.fluid) : 'Boş'}: ${Math.round(n.amount)}/${n.capacity}` : 'Sıvı hattı');
+      }
       if (b.recipe) lines.push(`Tarif: ${RECIPES[b.recipe].name}`);
       if (isBelt(b.type)) lines.push(`${(def.beltSpeed ?? 1) * 120} adet/dk`);
+      key += `:${Math.round(this.state.fluids.get(b.fnet ?? -1)?.amount ?? 0)}`;
       if (b.type === 'hub') lines.push('Tıkla: kademeler · Yakınında elle üretim yapılabilir');
       else if (!isBelt(b.type)) lines.push('<span class="muted">Tıkla/E: aç</span>');
       html = lines.join('\n');
