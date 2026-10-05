@@ -29,6 +29,7 @@ interface BuildingView {
   lastStatus?: string;
   w: number;
   h: number;
+  curve: 0 | 1 | 3;
 }
 
 interface Fx {
@@ -153,15 +154,20 @@ export class Renderer {
       const cur = this.state.buildings.get(b.id);
       if (cur) this.updateBuilding(cur);
     }
+    // Bant eklenip kalkınca komşu köşelerin şekli değişebilir
+    if (upsert.some((b) => isBelt(b.type)) || remove.length) {
+      for (const b of this.state.buildings.values()) if (isBelt(b.type)) this.updateBuilding(b);
+    }
     if (upsert.some((b) => b.type === 'power_pole' || BUILDINGS[b.type].power || BUILDINGS[b.type].powerGen) || remove.length) this.drawPowerLines();
   }
 
   private updateBuilding(b: BuildingState) {
-    const key = `${b.type}:${b.x}:${b.y}:${b.rot}`;
+    const curve = isBelt(b.type) ? this.state.beltCurve(b) : 0;
+    const key = `${b.type}:${b.x}:${b.y}:${b.rot}:${curve}`;
     let v = this.views.get(b.id);
     if (v && v.key !== key) { v.root.destroy({ children: true }); this.views.delete(b.id); v = undefined; }
     if (!v) {
-      v = this.createView(b);
+      v = this.createView(b, curve, key);
       this.views.set(b.id, v);
     }
     if (v.lastStatus !== b.status + (b.tripped ? 'T' : '')) {
@@ -176,7 +182,7 @@ export class Renderer {
     }
   }
 
-  private createView(b: BuildingState): BuildingView {
+  private createView(b: BuildingState, curve: 0 | 1 | 3, key: string): BuildingView {
     const def = BUILDINGS[b.type];
     const [W, H] = footprintSize(def.w, def.h, b.rot);
     const root = new Container();
@@ -186,9 +192,9 @@ export class Renderer {
     root.addChild(body);
     const g = new Graphics();
     body.addChild(g);
-    const view: BuildingView = { root, body, status: new Graphics(), key: `${b.type}:${b.x}:${b.y}:${b.rot}`, w: W, h: H };
+    const view: BuildingView = { root, body, status: new Graphics(), key, w: W, h: H, curve };
     if (isBelt(b.type)) {
-      drawBelt(g, def);
+      drawBelt(g, def, curve);
       this.beltLayer.addChild(root);
       return view;
     }
@@ -427,8 +433,7 @@ export class Renderer {
       if (!b || b.x < vx0 || b.x > vx1 || b.y < vy0 || b.y > vy1) continue;
       const items = this.state.beltItemsAt(id, now);
       for (const it of items) {
-        const px = b.x + 0.5 + DX[b.rot] * (it.pos - 0.5);
-        const py = b.y + 0.5 + DY[b.rot] * (it.pos - 0.5);
+        const [px, py] = beltPoint(b, this.views.get(id)?.curve ?? 0, it.pos);
         const col = ITEMS[it.item]?.color ?? 0xffffff;
         ig.roundRect(px - 0.17, py - 0.17, 0.34, 0.34, 0.08).fill(col).stroke({ width: 0.03, color: darken(col, 0.45) });
       }
@@ -485,15 +490,61 @@ export class Renderer {
 
 // ---------------------------------------------------------------- çizim yardımcıları
 
-function drawBelt(g: Graphics, def: BuildingDef) {
+/** Bant üzerindeki bir eşyanın dünya konumu (pos: 0 giriş kenarı, 1 çıkış kenarı) */
+function beltPoint(b: BuildingState, curve: 0 | 1 | 3, pos: number): [number, number] {
+  if (curve === 0) return [b.x + 0.5 + DX[b.rot] * (pos - 0.5), b.y + 0.5 + DY[b.rot] * (pos - 0.5)];
+  // Yerel çerçeve: çıkış doğuda, giriş kuzey (1) veya güney (3) kenarında
+  const cy = curve === 1 ? -0.5 : 0.5;
+  const a = curve === 1 ? Math.PI - pos * (Math.PI / 2) : Math.PI + pos * (Math.PI / 2);
+  const lx = 0.5 + Math.cos(a) * 0.5, ly = cy + Math.sin(a) * 0.5;
+  const r = (b.rot * Math.PI) / 2;
+  const c = Math.cos(r), s = Math.sin(r);
+  return [b.x + 0.5 + lx * c - ly * s, b.y + 0.5 + lx * s + ly * c];
+}
+
+function drawBelt(g: Graphics, def: BuildingDef, curve: 0 | 1 | 3) {
   const mk2 = def.id === 'belt_mk2';
-  g.rect(-0.5, -0.42, 1, 0.84).fill(mk2 ? 0x2a3a4a : 0x2c2f33);
-  g.rect(-0.5, -0.46, 1, 0.08).fill(mk2 ? 0x6a9ac0 : 0xc89a3a);
-  g.rect(-0.5, 0.38, 1, 0.08).fill(mk2 ? 0x6a9ac0 : 0xc89a3a);
+  const bed = mk2 ? 0x2a3a4a : 0x2c2f33;
+  const rail = mk2 ? 0x6a9ac0 : 0xc89a3a;
+  const arrow = mk2 ? 0x5a7a9a : 0x4a4f55;
+  if (curve !== 0) {
+    // Çeyrek halka: merkez köşede, eşyalar r=0.5 yayında akar
+    const cy = curve === 1 ? -0.5 : 0.5;
+    const a0 = curve === 1 ? Math.PI / 2 : Math.PI;
+    const a1 = curve === 1 ? Math.PI : (3 * Math.PI) / 2;
+    const ring = (r0: number, r1: number, color: number) => {
+      g.moveTo(0.5 + Math.cos(a0) * r1, cy + Math.sin(a0) * r1)
+        .arc(0.5, cy, r1, a0, a1)
+        .lineTo(0.5 + Math.cos(a1) * r0, cy + Math.sin(a1) * r0)
+        .arc(0.5, cy, r0, a1, a0, true)
+        .closePath()
+        .fill(color);
+    };
+    ring(0.08, 0.92, bed);
+    ring(0.04, 0.12, rail);
+    ring(0.88, 0.96, rail);
+    // Yay üzerinde akış okları
+    for (const t of [0.3, 0.75]) {
+      const a = curve === 1 ? Math.PI - t * (Math.PI / 2) : Math.PI + t * (Math.PI / 2);
+      const px = 0.5 + Math.cos(a) * 0.5, py = cy + Math.sin(a) * 0.5;
+      // Hareket yönü (yayın teğeti)
+      const dir = curve === 1 ? -1 : 1;
+      const tx = -Math.sin(a) * dir, ty = Math.cos(a) * dir;
+      const nx = -ty, ny = tx;
+      g.moveTo(px - tx * 0.08 + nx * 0.2, py - ty * 0.08 + ny * 0.2)
+        .lineTo(px + tx * 0.1, py + ty * 0.1)
+        .lineTo(px - tx * 0.08 - nx * 0.2, py - ty * 0.08 - ny * 0.2);
+    }
+    g.stroke({ width: 0.06, color: arrow });
+    return;
+  }
+  g.rect(-0.5, -0.42, 1, 0.84).fill(bed);
+  g.rect(-0.5, -0.46, 1, 0.08).fill(rail);
+  g.rect(-0.5, 0.38, 1, 0.08).fill(rail);
   for (const off of [-0.25, 0.2]) {
     g.moveTo(off - 0.08, -0.2).lineTo(off + 0.1, 0).lineTo(off - 0.08, 0.2);
   }
-  g.stroke({ width: 0.06, color: mk2 ? 0x5a7a9a : 0x4a4f55 });
+  g.stroke({ width: 0.06, color: arrow });
 }
 
 function portPos(def: BuildingDef, p: PortDef): [number, number] {

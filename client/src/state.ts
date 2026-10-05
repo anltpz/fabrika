@@ -1,6 +1,8 @@
 import {
   BELT_ITEM_SPACING,
   BUILDINGS,
+  DX,
+  DY,
   ITEM_IDS,
   INVENTORY_SLOTS,
   footprint,
@@ -258,6 +260,23 @@ export class GameState extends Emitter {
       if (Math.hypot(me.x - (x + w / 2), me.y - (y + h / 2)) > 16) return 'Çok uzak';
     }
     return null;
+  }
+
+  /**
+   * Bandın köşe şekli: 0 = düz, 1 = yerel kuzey kenarından giriş, 3 = yerel güney kenarından giriş.
+   * Arkadan besleyen bant yoksa ve tam olarak bir yandan besleyen bant varsa köşe kavisli çizilir.
+   */
+  beltCurve(b: BuildingState): 0 | 1 | 3 {
+    const feeds = (s: number) => {
+      const n = this.buildingAt(b.x - DX[s], b.y - DY[s]);
+      return !!n && isBelt(n.type) && n.rot === s;
+    };
+    if (feeds(b.rot)) return 0;
+    const left = feeds((b.rot + 1) % 4);
+    const right = feeds((b.rot + 3) % 4);
+    if (left && !right) return 1;
+    if (right && !left) return 3;
+    return 0;
   }
 
   /** Bant üzerindeki eşyaların görsel konumu (sunucu güncellemeleri arasında ilerletilir) */
