@@ -36,8 +36,12 @@ import {
   PURITY_NAMES,
   RECIPES,
   STORAGE_SLOTS,
+  SPLITTER_FILTERS,
+  UNDERGROUND_RANGE,
   addItem,
   countItem,
+  findUndergroundExit,
+  splitterTargets,
   footprint,
   footprintSize,
   generateMap,
@@ -128,6 +132,10 @@ const MACHINE_OUT_CAP = 50;
 const GEN_FUEL_CAP = 50;
 const QUEUE_CAP = 2;
 const MANUAL_IN_CAP = 500;
+const UNDERGROUND_IN_CAP = 2;
+const UNDERGROUND_OUT_CAP = 4;
+/** İç kuyruğu (items) olan lojistik yapılar */
+const QUEUE_TYPES = new Set(['splitter', 'merger', 'smart_splitter', 'underground_in', 'underground_out']);
 
 function inCap(need: number): number {
   return Math.max(need * 3, 10);
@@ -291,9 +299,10 @@ export class World {
     const def = BUILDINGS[type];
     const b: BuildingState = { id: this.nextId++, type, x, y, rot: rot & 3, inBuf: {}, outBuf: {}, progress: 0, status: 'idle' };
     if (type === 'storage') b.storage = makeInventory(STORAGE_SLOTS);
-    if (isBelt(type) || type === 'splitter' || type === 'merger') b.items = [];
+    if (isBelt(type) || QUEUE_TYPES.has(type)) b.items = [];
     if (def.powerGen) b.fuel = 0;
-    if (type === 'splitter') b.rr = 0;
+    if (type === 'splitter' || type === 'smart_splitter') b.rr = 0;
+    if (type === 'smart_splitter') b.filters = ['any', 'none', 'none'];
     return b;
   }
 
@@ -740,6 +749,29 @@ export class World {
     this.broadcast({ t: 'tech', tech: this.tech });
   }
 
+  /** Çıkışa eşleşen bir giriş var mı (durum göstergesi için) */
+  private undergroundEntranceFor(out: BuildingState): boolean {
+    const back = opposite(out.rot);
+    for (let k = 1; k <= UNDERGROUND_RANGE; k++) {
+      const b = this.buildingAt(out.x + DX[back] * k, out.y + DY[back] * k);
+      if (b && b.type === 'underground_in' && b.rot === out.rot) {
+        const e = findUndergroundExit(b.x, b.y, b.rot, (x, y) => this.buildingAt(x, y));
+        return !!e && e[0] === out.x && e[1] === out.y;
+      }
+    }
+    return false;
+  }
+
+  setFilter(id: number, bid: number, index: number, filter: string) {
+    const b = this.buildings.get(bid);
+    const p = this.players.get(id);
+    if (!b || !p || b.type !== 'smart_splitter' || !b.filters) return;
+    if (!Number.isInteger(index) || index < 0 || index > 2) return;
+    if (!(filter in SPLITTER_FILTERS) && !ITEMS[filter]) return;
+    b.filters[index] = filter;
+    this.markChanged(b.id);
+  }
+
   resetFuse(id: number, bid: number) {
     const net = this.netOf.get(bid);
     if (net === undefined) return;
@@ -1026,7 +1058,12 @@ export class World {
       return true;
     }
     if (t.type === 'storage') return addItem(t.storage!, item, 1) === 0;
-    if (t.type === 'splitter' || t.type === 'merger') {
+    if (t.type === 'underground_in') {
+      if (t.items!.length >= UNDERGROUND_IN_CAP) return false;
+      t.items!.push({ item, pos: 0 });
+      return true;
+    }
+    if (t.type === 'splitter' || t.type === 'merger' || t.type === 'smart_splitter') {
       if (t.items!.length >= QUEUE_CAP) return false;
       t.items!.push({ item, pos: 0 });
       return true;
@@ -1051,12 +1088,44 @@ export class World {
       }
       if (!items.length) this.beltsWithItems.delete(id);
     }
+    // Alt geçitler: girişten eşleşen çıkışa
+    for (const b of this.buildings.values()) {
+      if (b.type !== 'underground_in' && b.type !== 'underground_out') continue;
+      if (b.type === 'underground_out') {
+        const paired = this.undergroundEntranceFor(b);
+        this.setStatus(b, paired ? 'working' : 'unpaired');
+        continue;
+      }
+      const exit = findUndergroundExit(b.x, b.y, b.rot, (x, y) => this.buildingAt(x, y));
+      if (!exit) { this.setStatus(b, 'unpaired'); continue; }
+      this.setStatus(b, 'working');
+      const out = this.buildingAt(exit[0], exit[1])!;
+      while (b.items!.length && out.items!.length < UNDERGROUND_OUT_CAP) out.items!.push(b.items!.shift()!);
+    }
     // Bina çıkışları
     for (const b of this.buildings.values()) {
       const def = BUILDINGS[b.type];
       if (!def.outputs.length) continue;
       const ports = worldPorts(b.type, b.x, b.y, b.rot, 'outputs');
-      if (b.type === 'splitter') {
+      if (b.type === 'smart_splitter') {
+        const it = b.items![0];
+        if (!it) continue;
+        const { primary, overflow } = splitterTargets(b.filters ?? ['any', 'any', 'any'], it.item);
+        let sent = false;
+        for (let k = 0; k < primary.length && !sent; k++) {
+          const idx = primary[((b.rr ?? 0) + k) % primary.length];
+          const p = ports[idx];
+          if (this.tryInsert(p.x, p.y, p.dir, it.item)) { b.items!.shift(); b.rr = ((b.rr ?? 0) + k + 1) % Math.max(1, primary.length); sent = true; }
+        }
+        for (const idx of overflow) {
+          if (sent) break;
+          const p = ports[idx];
+          if (this.tryInsert(p.x, p.y, p.dir, it.item)) { b.items!.shift(); sent = true; }
+        }
+      } else if (b.type === 'underground_out') {
+        const it = b.items![0];
+        if (it && this.tryInsert(ports[0].x, ports[0].y, ports[0].dir, it.item)) b.items!.shift();
+      } else if (b.type === 'splitter') {
         const it = b.items![0];
         if (!it) continue;
         for (let k = 0; k < ports.length; k++) {
@@ -1189,7 +1258,7 @@ export class World {
     if (t % 4 === 0) {
       for (const b of this.buildings.values()) {
         if (isBelt(b.type)) continue;
-        const key = JSON.stringify([b.status, b.inBuf, b.outBuf, Math.round(b.progress * 50), b.recipe, b.storage, b.tripped, b.items?.length, Math.round(b.fuel ?? 0)]);
+        const key = JSON.stringify([b.status, b.inBuf, b.outBuf, Math.round(b.progress * 50), b.recipe, b.storage, b.tripped, b.items?.length, Math.round(b.fuel ?? 0), b.filters]);
         if (this.lastSent.get(b.id) !== key) { this.lastSent.set(b.id, key); this.changed.add(b.id); }
       }
     }

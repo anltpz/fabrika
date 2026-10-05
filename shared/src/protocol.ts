@@ -15,6 +15,7 @@ export type ClientMsg =
   | { t: 'buildBelts'; type: string; path: Array<{ x: number; y: number; dir: number }> }
   | { t: 'dismantle'; id: number }
   | { t: 'setRecipe'; id: number; recipe: string }
+  | { t: 'setFilter'; id: number; index: number; filter: string }
   | { t: 'take'; id: number; from: 'in' | 'out' | 'storage'; item?: string; slot?: number }
   | { t: 'put'; id: number; slot: number; count?: number }
   | { t: 'craft'; recipe: string; count: number }

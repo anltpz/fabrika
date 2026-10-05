@@ -94,6 +94,13 @@ h1, h2, h3 { font-family: Rajdhani, sans-serif; margin: 0; letter-spacing: .5px;
 .chat input { width: 100%; margin-top: 6px; display: none; pointer-events: auto; }
 .chat.open input { display: block; }
 
+select { font: inherit; background: #0f1215; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; outline: none; }
+select:focus { border-color: var(--accent); }
+.filter-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.filter-row .fname { width: 90px; color: var(--muted); }
+.filter-row img, .filter-row .ficon { width: 26px; height: 26px; display: inline-block; }
+.filter-row select { flex: 1; }
+
 /* ---------- Toast ---------- */
 .toasts { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .toast { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 8px 14px; border-radius: 6px; font-size: 14px; animation: tin .2s ease-out; }

@@ -79,6 +79,7 @@ export class Room {
       case 'attack': w.attack(id, msg.angle); break;
       case 'hubSubmit': w.hubSubmit(id); break;
       case 'resetFuse': w.resetFuse(id, msg.id); break;
+      case 'setFilter': w.setFilter(id, msg.id, msg.index, msg.filter); break;
       case 'ping': this.sendTo(id, { t: 'pong', time: msg.time }); break;
     }
   }

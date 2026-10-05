@@ -8,6 +8,7 @@ import {
   PURITY_NAMES,
   RECIPES,
   RECIPE_LIST,
+  SPLITTER_FILTERS,
   STATUS_NAMES,
   countItem,
   footprint,
@@ -26,7 +27,7 @@ import { chip, costChips, flowChips, fmt, h, hex, icon } from './dom';
 type PanelKind = 'build' | 'inventory' | 'hub' | 'machine';
 
 const STATUS_DOT: Record<string, string> = {
-  working: '#5ad65a', idle: '#9aa0a6', nopower: '#e04848', tripped: '#ff3030', full: '#e8c040', nofuel: '#e07a30', norecipe: '#6a9ae8', noinput: '#e8c040',
+  working: '#5ad65a', idle: '#9aa0a6', nopower: '#e04848', tripped: '#ff3030', full: '#e8c040', nofuel: '#e07a30', norecipe: '#6a9ae8', noinput: '#e8c040', unpaired: '#e04848',
 };
 
 export class Panels {
@@ -239,7 +240,7 @@ export class Panels {
     const def = BUILDINGS[b.type];
     if (b.type === 'hub') return this.renderHub();
     const body = h('div');
-    const statusPill = (def.crafter || def.mineRate || def.powerGen)
+    const statusPill = (def.crafter || def.mineRate || def.powerGen || b.type.startsWith('underground'))
       ? h('span', { class: 'status-pill' }, h('span', { class: 'dot', style: { background: STATUS_DOT[b.status] ?? '#999' } }), STATUS_NAMES[b.status])
       : null;
     const dismantle = h('button', { class: 'ghost small', onclick: () => { this.send({ t: 'dismantle', id: b.id }); this.close(); } }, 'Sök');
@@ -262,6 +263,8 @@ export class Panels {
     else if (def.mineRate) body.append(this.minerSection(b, def.mineRate));
     else if (def.powerGen) body.append(this.generatorSection(b));
     else if (b.type === 'storage' || b.type === 'crate') body.append(this.storageSection(b));
+    else if (b.type === 'smart_splitter') body.append(this.filterSection(b));
+    else if (b.type.startsWith('underground')) body.append(h('p', { class: 'muted' }, def.desc + ' Giriş ile çıkış arasında en fazla 5 tile olabilir; aradaki binalar ve bantlar engel olmaz.'));
     else if (b.type === 'power_pole') body.append(h('p', { class: 'muted' }, 'Direkler 5 tile yarıçapındaki binalara güç verir ve 12 tile içindeki diğer direklere otomatik bağlanır.'));
     else if (b.type === 'workbench') body.append(h('p', { class: 'muted' }, 'Yakınındayken envanterinden (Tab) elle üretim yapabilirsin.'), h('button', { onclick: () => this.open('inventory') }, 'Envanteri Aç'));
     else body.append(h('p', { class: 'muted' }, def.desc));
@@ -325,6 +328,25 @@ export class Panels {
     }
     wrap.append(list);
     void perMin;
+    return wrap;
+  }
+
+  private filterSection(b: BuildingState): HTMLElement {
+    const names = ['Ön çıkış', 'Sol çıkış', 'Sağ çıkış'];
+    const wrap = h('div', {}, h('div', { class: 'section-title' }, 'Çıkış Filtreleri'));
+    const items = Object.values(ITEMS);
+    (b.filters ?? []).forEach((f, i) => {
+      const sel = h('select', { class: 'filter-select' }) as HTMLSelectElement;
+      for (const [k, v] of Object.entries(SPLITTER_FILTERS)) sel.append(h('option', { value: k }, v));
+      const grp = h('optgroup', { label: 'Eşya' });
+      for (const it of items) grp.append(h('option', { value: it.id }, it.name));
+      sel.append(grp);
+      sel.value = f;
+      sel.addEventListener('change', () => this.send({ t: 'setFilter', id: b.id, index: i, filter: sel.value }));
+      wrap.append(h('div', { class: 'filter-row' }, h('span', { class: 'fname' }, names[i]), ITEMS[f] ? icon(f) : h('span', { class: 'ficon' }), sel));
+    });
+    wrap.append(h('p', { class: 'muted', style: { fontSize: '12px', marginTop: '10px' } },
+      'Belirli eşya: sadece o eşya. Herhangi: her şey. Tanımsız diğerleri: hiçbir çıkışta filtrelenmemiş eşyalar. Taşma: diğer çıkışlar doluyken kullanılır. Kapalı: hiçbir şey çıkmaz.'));
     return wrap;
   }
 

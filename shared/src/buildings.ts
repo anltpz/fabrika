@@ -1,4 +1,4 @@
-import { Dir, footprintSize, rotateLocal, rotDir } from './grid';
+import { DX, DY, Dir, footprintSize, rotateLocal, rotDir } from './grid';
 
 export interface PortDef {
   x: number;
@@ -114,6 +114,21 @@ const list: BuildingDef[] = [
     inputs: [{ x: 0, y: 0, dir: 2 }, { x: 0, y: 0, dir: 3 }, { x: 0, y: 0, dir: 1 }], outputs: [{ x: 0, y: 0, dir: 0 }], unlock: 1, buildable: true, short: 'BRL',
   },
   {
+    id: 'underground_in', name: 'Alt Geçit Girişi', desc: 'Eşyaları yer altından 5 tile\'a kadar taşır. Önüne aynı yöne bakan bir Alt Geçit Çıkışı kur.',
+    w: 1, h: 1, cost: { iron_plate: 6, concrete: 4 }, category: 'lojistik', color: 0x8a7040, walkable: true,
+    inputs: [{ x: 0, y: 0, dir: 2 }], outputs: [], unlock: 1, buildable: true, short: 'AGG',
+  },
+  {
+    id: 'underground_out', name: 'Alt Geçit Çıkışı', desc: 'Arkasındaki Alt Geçit Girişinden gelen eşyaları önüne verir.',
+    w: 1, h: 1, cost: { iron_plate: 6, concrete: 4 }, category: 'lojistik', color: 0x8a7040, walkable: true,
+    inputs: [], outputs: [{ x: 0, y: 0, dir: 0 }], unlock: 1, buildable: true, short: 'AGÇ',
+  },
+  {
+    id: 'smart_splitter', name: 'Akıllı Ayırıcı', desc: 'Her çıkışa filtre ver: belirli bir eşya, herhangi, tanımsız diğerleri, taşma veya kapalı.',
+    w: 1, h: 1, cost: { reinforced_plate: 2, rotor: 2, cable: 10 }, category: 'lojistik', color: 0xe08a30,
+    inputs: [{ x: 0, y: 0, dir: 2 }], outputs: [{ x: 0, y: 0, dir: 0 }, { x: 0, y: 0, dir: 3 }, { x: 0, y: 0, dir: 1 }], unlock: 2, buildable: true, short: 'AKL',
+  },
+  {
     id: 'storage', name: 'Depo Kutusu', desc: '24 yuvalı depo. Arkadan alır, önden verir.',
     w: 2, h: 2, cost: { iron_plate: 10, iron_rod: 10 }, category: 'lojistik', color: 0x8a6a4a,
     inputs: [{ x: 0, y: 0, dir: 2 }], outputs: [{ x: 1, y: 0, dir: 0 }], unlock: 0, buildable: true, short: 'DPO',
@@ -159,4 +174,44 @@ export function worldPorts(type: string, x: number, y: number, rot: number, kind
     const [lx, ly] = rotateLocal(p.x, p.y, def.w, def.h, rot);
     return { x: x + lx, y: y + ly, dir: rotDir(p.dir, rot) };
   });
+}
+
+/** Alt geçit girişi ile çıkışı arasındaki en fazla mesafe (tile) */
+export const UNDERGROUND_RANGE = 6;
+
+/** Girişin önünde aynı yöne bakan en yakın çıkışı bulur; arada aynı yönde başka giriş varsa eşleşme yoktur. */
+export function findUndergroundExit(
+  x: number,
+  y: number,
+  rot: number,
+  at: (x: number, y: number) => { type: string; rot: number } | undefined,
+): [number, number] | null {
+  for (let k = 1; k <= UNDERGROUND_RANGE; k++) {
+    const tx = x + DX[rot] * k, ty = y + DY[rot] * k;
+    const b = at(tx, ty);
+    if (!b || b.rot !== rot) continue;
+    if (b.type === 'underground_out') return [tx, ty];
+    if (b.type === 'underground_in') return null;
+  }
+  return null;
+}
+
+/** Akıllı ayırıcı filtre seçenekleri (eşya kimlikleri dışındakiler) */
+export const SPLITTER_FILTERS: Record<string, string> = {
+  any: 'Herhangi',
+  none: 'Kapalı',
+  rest: 'Tanımsız diğerleri',
+  overflow: 'Taşma',
+};
+
+/** Filtrelere göre bir eşyanın gidebileceği çıkışlar: önce birincil adaylar, olmazsa taşma çıkışları */
+export function splitterTargets(filters: string[], item: string): { primary: number[]; overflow: number[] } {
+  const specific = filters.some((f) => f === item);
+  const primary: number[] = [];
+  const overflow: number[] = [];
+  filters.forEach((f, i) => {
+    if (f === item || f === 'any' || (f === 'rest' && !specific)) primary.push(i);
+    else if (f === 'overflow') overflow.push(i);
+  });
+  return { primary, overflow };
 }

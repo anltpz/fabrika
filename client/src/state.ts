@@ -14,6 +14,7 @@ import {
   makeInventory,
   terrainBuildable,
   tileKey,
+  worldPorts,
 } from '@fabrika/shared';
 import type {
   BeltItem,
@@ -268,8 +269,11 @@ export class GameState extends Emitter {
    */
   beltCurve(b: BuildingState): 0 | 1 | 3 {
     const feeds = (s: number) => {
-      const n = this.buildingAt(b.x - DX[s], b.y - DY[s]);
-      return !!n && isBelt(n.type) && n.rot === s;
+      const nx = b.x - DX[s], ny = b.y - DY[s];
+      const n = this.buildingAt(nx, ny);
+      if (!n) return false;
+      if (isBelt(n.type)) return n.rot === s;
+      return worldPorts(n.type, n.x, n.y, n.rot, 'outputs').some((p) => p.x === nx && p.y === ny && p.dir === s);
     };
     if (feeds(b.rot)) return 0;
     const left = feeds((b.rot + 1) % 4);

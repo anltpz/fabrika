@@ -138,6 +138,65 @@ describe('üretim zinciri', () => {
   });
 });
 
+describe('lojistik', () => {
+  it('alt geçit eşyaları engelin altından taşır', () => {
+    const { w, p } = setup();
+    const x = Math.floor(p.x) + 6, y = Math.floor(p.y) - 4;
+    clearArea(w, x - 1, y - 1, x + 12, y + 3);
+    p.x = x + 4; p.y = y + 3.5;
+    w.build(p.id, 'storage', x, y, 0); // çıkış (x+2, y)
+    w.buildingAt(x, y)!.storage![0] = { item: 'iron_plate', count: 20 };
+    w.build(p.id, 'underground_in', x + 2, y, 0);
+    // Arada başka bir hat (dikey bant) geçsin
+    w.buildBelts(p.id, 'belt_mk1', [{ x: x + 4, y: y - 1, dir: 1 }, { x: x + 4, y, dir: 1 }, { x: x + 4, y: y + 1, dir: 1 }]);
+    w.build(p.id, 'underground_out', x + 6, y, 0);
+    w.buildBelts(p.id, 'belt_mk1', [{ x: x + 7, y, dir: 0 }, { x: x + 8, y, dir: 0 }]);
+    w.build(p.id, 'storage', x + 9, y, 0);
+    run(w, 10);
+    const dst = w.buildingAt(x + 9, y)!;
+    const got = dst.storage!.reduce((s, it) => s + (it?.item === 'iron_plate' ? it.count : 0), 0);
+    expect(got).toBeGreaterThanOrEqual(10);
+    expect(w.buildingAt(x + 2, y)!.status).toBe('working');
+    // Aradaki dikey banda hiçbir eşya girmemeli
+    expect(w.buildingAt(x + 4, y)!.items!.length).toBe(0);
+  });
+
+  it('eşleşmeyen alt geçit girişi "bağlantı yok" durumunda', () => {
+    const { w, p } = setup();
+    const x = Math.floor(p.x) + 2, y = Math.floor(p.y);
+    clearArea(w, x, y, x + 10, y);
+    w.build(p.id, 'underground_in', x, y, 0);
+    w.build(p.id, 'underground_out', x + 8, y, 0); // menzil dışı
+    run(w, 0.2);
+    expect(w.buildingAt(x, y)!.status).toBe('unpaired');
+  });
+
+  it('akıllı ayırıcı filtre ve taşmaya göre dağıtır', () => {
+    const { w, p } = setup();
+    const x = Math.floor(p.x) + 6, y = Math.floor(p.y) - 4;
+    clearArea(w, x - 1, y - 2, x + 8, y + 4);
+    p.x = x + 1; p.y = y + 4.5;
+    w.build(p.id, 'storage', x, y, 0); // çıkış (x+2, y)
+    const src = w.buildingAt(x, y)!;
+    src.storage![0] = { item: 'iron_plate', count: 10 };
+    src.storage![1] = { item: 'iron_rod', count: 10 };
+    w.build(p.id, 'smart_splitter', x + 2, y, 0);
+    const sp = w.buildingAt(x + 2, y)!;
+    w.setFilter(p.id, sp.id, 0, 'iron_rod'); // ön: çubuk
+    w.setFilter(p.id, sp.id, 1, 'rest'); // sol: diğerleri
+    w.setFilter(p.id, sp.id, 2, 'none'); // sağ: kapalı
+    w.buildBelts(p.id, 'belt_mk1', [{ x: x + 3, y, dir: 0 }]);
+    w.buildBelts(p.id, 'belt_mk1', [{ x: x + 2, y: y - 1, dir: 3 }]);
+    w.buildBelts(p.id, 'belt_mk1', [{ x: x + 2, y: y + 1, dir: 1 }]);
+    run(w, 3);
+    const items = (bx: number, by: number) => w.buildingAt(bx, by)!.items!.map((i) => i.item);
+    expect(items(x + 3, y).every((i) => i === 'iron_rod')).toBe(true);
+    expect(items(x + 2, y - 1).every((i) => i === 'iron_plate')).toBe(true);
+    expect(items(x + 2, y + 1).length).toBe(0);
+    expect(items(x + 2, y - 1).length).toBeGreaterThan(0);
+  });
+});
+
 describe('oyuncu', () => {
   it('elle üretim ve HUB teslimi kademe açar', () => {
     const w = new World(SEED);

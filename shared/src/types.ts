@@ -3,7 +3,7 @@ export interface Slot {
   count: number;
 }
 
-export type MachineStatus = 'working' | 'idle' | 'nopower' | 'full' | 'nofuel' | 'norecipe' | 'noinput' | 'tripped';
+export type MachineStatus = 'working' | 'idle' | 'nopower' | 'full' | 'nofuel' | 'norecipe' | 'noinput' | 'tripped' | 'unpaired';
 
 export const STATUS_NAMES: Record<MachineStatus, string> = {
   working: 'Çalışıyor',
@@ -14,6 +14,7 @@ export const STATUS_NAMES: Record<MachineStatus, string> = {
   norecipe: 'Tarif seçilmedi',
   noinput: 'Girdi bekleniyor',
   tripped: 'Sigorta attı',
+  unpaired: 'Bağlantı yok',
 };
 
 export interface BeltItem {
@@ -38,6 +39,8 @@ export interface BuildingState {
   items?: BeltItem[];
   /** Ayırıcı / depo için sıradaki çıkış */
   rr?: number;
+  /** Akıllı ayırıcı filtreleri: [ön, sol, sağ] */
+  filters?: string[];
   /** Direk sigortası */
   tripped?: boolean;
   /** Güç ağı kimliği (istemci için) */

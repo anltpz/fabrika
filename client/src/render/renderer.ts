@@ -8,6 +8,8 @@ import {
   PLAYER_MAX_HP,
   POLE_SUPPLY_RADIUS,
   POLE_WIRE_RANGE,
+  UNDERGROUND_RANGE,
+  findUndergroundExit,
   footprintSize,
   isBelt,
   opposite,
@@ -51,6 +53,7 @@ const STATUS_COLORS: Record<string, number> = {
   nofuel: 0xe07a30,
   norecipe: 0x6a9ae8,
   noinput: 0xe8c040,
+  unpaired: 0xe04848,
 };
 
 function darken(c: number, f: number): number {
@@ -174,7 +177,7 @@ export class Renderer {
       v.lastStatus = b.status + (b.tripped ? 'T' : '');
       v.status.clear();
       const def = BUILDINGS[b.type];
-      if (def.power || def.powerGen || def.mineRate || def.crafter) {
+      if (def.power || def.powerGen || def.mineRate || def.crafter || b.type.startsWith('underground')) {
         v.status.circle(0, 0, 0.13).fill(STATUS_COLORS[b.status] ?? 0x999999).stroke({ width: 0.04, color: 0x111111 });
       } else if (b.type === 'power_pole' && b.tripped) {
         v.status.circle(0, 0, 0.13).fill(0xff3030).stroke({ width: 0.04, color: 0x111111 });
@@ -458,6 +461,8 @@ export class Renderer {
         o.rect(hover.x, hover.y, 1, 1).stroke({ width: 0.04, color: 0xffffff, alpha: 0.5 });
       }
     }
+    const showTunnels = (ghost && ghost.type.startsWith('underground')) || hover?.building?.type.startsWith('underground');
+    if (showTunnels) this.drawUndergroundLinks(o, vx0, vx1, vy0, vy1, ghost);
     if (ghost) {
       const def = BUILDINGS[ghost.type];
       if (ghost.showPower) {
@@ -478,6 +483,24 @@ export class Renderer {
     }
   }
 
+  private drawUndergroundLinks(o: Graphics, vx0: number, vx1: number, vy0: number, vy1: number, ghost: GhostSpec | null) {
+    const at = (x: number, y: number) => this.state.buildingAt(x, y);
+    for (const b of this.state.buildings.values()) {
+      if (b.type !== 'underground_in' || b.x < vx0 || b.x > vx1 || b.y < vy0 || b.y > vy1) continue;
+      const e = findUndergroundExit(b.x, b.y, b.rot, at);
+      if (!e) continue;
+      dashed(o, b.x + 0.5, b.y + 0.5, e[0] + 0.5, e[1] + 0.5);
+    }
+    o.stroke({ width: 0.08, color: 0xffd060, alpha: 0.8 });
+    // Girişin menzilini göster
+    if (ghost && ghost.type === 'underground_in') {
+      for (const t of ghost.tiles) {
+        for (let k = 1; k <= UNDERGROUND_RANGE; k++) o.rect(t.x + DX[t.rot] * k + 0.3, t.y + DY[t.rot] * k + 0.3, 0.4, 0.4);
+      }
+      o.fill({ color: 0xffd060, alpha: 0.25 });
+    }
+  }
+
   screenToWorld(sx: number, sy: number): [number, number] {
     const scale = TILE * this.zoom;
     return [(sx - this.world.position.x) / scale, (sy - this.world.position.y) / scale];
@@ -489,6 +512,15 @@ export class Renderer {
 }
 
 // ---------------------------------------------------------------- çizim yardımcıları
+
+function dashed(g: Graphics, x0: number, y0: number, x1: number, y1: number) {
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  const n = Math.max(1, Math.floor(len / 0.3));
+  for (let i = 0; i < n; i += 2) {
+    const a = i / n, b = Math.min(1, (i + 1) / n);
+    g.moveTo(x0 + (x1 - x0) * a, y0 + (y1 - y0) * a).lineTo(x0 + (x1 - x0) * b, y0 + (y1 - y0) * b);
+  }
+}
 
 /** Bant üzerindeki bir eşyanın dünya konumu (pos: 0 giriş kenarı, 1 çıkış kenarı) */
 function beltPoint(b: BuildingState, curve: 0 | 1 | 3, pos: number): [number, number] {
@@ -584,6 +616,23 @@ function drawBuildingBody(g: Graphics, def: BuildingDef, view: BuildingView) {
     g.moveTo(-0.35, -0.3).lineTo(0.35, 0.3).moveTo(0.35, -0.3).lineTo(-0.35, 0.3).stroke({ width: 0.04, color: 0x3a2a12 });
     return;
   }
+  if (def.id === 'underground_in' || def.id === 'underground_out') {
+    const entering = def.id === 'underground_in';
+    // Bant yatağı (açık taraf) + tünel ağzı
+    const bedX = entering ? -0.5 : 0;
+    g.rect(bedX, -0.42, 0.5, 0.84).fill(0x2c2f33);
+    g.rect(bedX, -0.46, 0.5, 0.08).fill(0xc89a3a);
+    g.rect(bedX, 0.38, 0.5, 0.08).fill(0xc89a3a);
+    const hx = entering ? -0.05 : -0.45;
+    g.roundRect(hx, -0.48, 0.5, 0.96, 0.1).fill(darken(c, 0.7)).stroke({ width: 0.05, color: 0x111111 });
+    const mouthX = entering ? hx : hx + 0.5;
+    g.moveTo(mouthX, -0.32).arc(mouthX, 0, 0.32, -Math.PI / 2, Math.PI / 2, !entering).closePath().fill(0x0c0d0f);
+    // Yön oku
+    const ax = entering ? 0.25 : -0.2;
+    g.moveTo(ax - 0.08, -0.14).lineTo(ax + 0.08, 0).lineTo(ax - 0.08, 0.14).stroke({ width: 0.06, color: 0xffd060 });
+    drawPorts(g, def);
+    return;
+  }
   // Gölge + gövde
   g.roundRect(x0 + 0.1, y0 + 0.14, w - 0.1, h - 0.1, 0.12).fill({ color: 0x000000, alpha: 0.35 });
   g.roundRect(x0 + 0.04, y0 + 0.04, w - 0.08, h - 0.08, 0.12).fill(darken(c, 0.55)).stroke({ width: 0.05, color: 0x111111 });
@@ -669,6 +718,11 @@ function drawBuildingBody(g: Graphics, def: BuildingDef, view: BuildingView) {
       g.rect(-0.7, -0.2, 0.5, 0.3).fill(0x8a8f95);
       g.rect(0.1, -0.25, 0.15, 0.4).fill(0x6a5030);
       g.circle(0.5, 0, 0.12).fill(0xc0c0c0);
+      break;
+    }
+    case 'smart_splitter': {
+      g.circle(0, 0, 0.22).fill(0x222222);
+      g.moveTo(-0.14, -0.12).lineTo(0.14, -0.12).lineTo(0.03, 0.02).lineTo(0.03, 0.15).lineTo(-0.03, 0.15).lineTo(-0.03, 0.02).closePath().fill(0xffd060);
       break;
     }
     case 'splitter':
