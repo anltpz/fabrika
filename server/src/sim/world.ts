@@ -115,8 +115,10 @@ export interface PlayerData {
   craftQueue: CraftJob[];
   dirtyInv: boolean;
   dirtyCraft: boolean;
-  /** Sunucunun kendi test botu: kişisel hileleri vardır */
+  /** Sunucunun kendi botu */
   isBot?: boolean;
+  /** Stres modundaki botların kişisel hileleri */
+  botCheats?: boolean;
 }
 
 interface Enemy {
@@ -302,7 +304,7 @@ export class World {
 
   /** Sunucu hileli ise herkes, değilse sadece test botları hile kullanabilir */
   cheatsFor(p: PlayerData | undefined): boolean {
-    return this.cheats || !!p?.isBot;
+    return this.cheats || (!!p?.isBot && !!p.botCheats);
   }
 
   private broadcast(msg: ServerMsg) {
@@ -477,7 +479,7 @@ export class World {
 
   // ---------------------------------------------------------------- oyuncular
 
-  join(name: string, token: string | undefined, isBot = false): PlayerData | string {
+  join(name: string, token: string | undefined, isBot = false, botCheats = false): PlayerData | string {
     if (token) {
       for (const p of this.players.values()) {
         if (p.token === token) {
@@ -515,7 +517,7 @@ export class World {
       dirtyInv: false,
       dirtyCraft: false,
     };
-    if (isBot) p.isBot = true;
+    if (isBot) { p.isBot = true; p.botCheats = botCheats; }
     this.players.set(id, p);
     return p;
   }

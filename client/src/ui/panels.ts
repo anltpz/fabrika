@@ -26,7 +26,7 @@ import {
   tileKey,
   worldPorts,
 } from '@fabrika/shared';
-import type { BuildingCategory, BuildingState, ClientMsg } from '@fabrika/shared';
+import type { BotMode, BuildingCategory, BuildingState, ClientMsg } from '@fabrika/shared';
 import type { GameState } from '../state';
 import { drawMinimapBase } from '../render/terrain';
 import { chip, costChips, flowChips, fmt, h, hex, icon } from './dom';
@@ -268,7 +268,8 @@ export class Panels {
   private botLogEl: HTMLElement | null = null;
   private botHeadEl: HTMLElement | null = null;
   private botCount = 2;
-  private botMinutes = 10;
+  private botMinutes = 0;
+  private botMode: BotMode = 'oyun';
 
   private renderBots(): HTMLElement {
     const st = this.state.botStatus;
@@ -283,22 +284,28 @@ export class Panels {
     body.append(h('div', { class: 'section-title' }, 'Test Botları'));
     if (st.running) {
       body.append(h('div', { class: 'filter-row' },
-        h('span', { class: 'status-pill' }, h('span', { class: 'dot', style: { background: '#5ad65a' } }), `${st.count} bot çalışıyor${st.minutes ? ` · ${st.minutes} dk` : ' · süresiz'}`),
+        h('span', { class: 'status-pill' }, h('span', { class: 'dot', style: { background: '#5ad65a' } }), `${st.count} bot çalışıyor · ${st.mode === 'stres' ? 'stres testi' : 'hilesiz oyun'}${st.minutes ? ` · ${st.minutes} dk` : ' · süresiz'}`),
         h('button', { onclick: () => this.send({ t: 'botStop' }) }, '■ Botları Durdur')));
     } else {
       const cnt = h('select', {}) as HTMLSelectElement;
       for (let i = 1; i <= Math.max(1, free); i++) cnt.append(h('option', { value: String(i) }, `${i} bot`));
       cnt.value = String(Math.min(this.botCount, Math.max(1, free)));
       cnt.addEventListener('change', () => { this.botCount = Number(cnt.value); });
+      const mode = h('select', {}) as HTMLSelectElement;
+      mode.append(h('option', { value: 'oyun' }, 'Gerçek oyun (hilesiz)'), h('option', { value: 'stres' }, 'Stres testi (hileli)'));
+      mode.value = this.botMode;
+      mode.addEventListener('change', () => { this.botMode = mode.value as BotMode; this.scheduleRender(); });
       const dur = h('select', {}) as HTMLSelectElement;
       for (const [v, l] of [[5, '5 dakika'], [10, '10 dakika'], [20, '20 dakika'], [60, '1 saat'], [0, 'Süresiz']] as const) dur.append(h('option', { value: String(v) }, l));
       dur.value = String(this.botMinutes);
       dur.addEventListener('change', () => { this.botMinutes = Number(dur.value); });
-      body.append(h('div', { class: 'filter-row' }, cnt, dur,
-        h('button', { disabled: free <= 0 ? 'true' : undefined, onclick: () => this.send({ t: 'botStart', count: Number(cnt.value), minutes: Number(dur.value) }) }, '▶ Botları Çağır')));
+      body.append(h('div', { class: 'filter-row' }, mode, cnt, dur,
+        h('button', { disabled: free <= 0 ? 'true' : undefined, onclick: () => this.send({ t: 'botStart', count: Number(cnt.value), minutes: Number(dur.value), mode: this.botMode }) }, '▶ Botları Çağır')));
       body.append(h('p', { class: 'muted', style: { fontSize: '12px' } },
         free <= 0 ? 'Oda dolu: botlar oyuncu yeri kaplar (en fazla 4).' :
-        'Botlar tüm kademeleri takım için açar, kendi hileleriyle bedava inşa eder ve maden/üretim/plan/sıvı/tren hatları kurarak sunucuyu zorlar. Sohbetten de çağırabilirsin: /bot 2 10, /bot dur, /hiz 2'));
+        this.botMode === 'oyun'
+          ? 'Botlar takım arkadaşı gibi sıfırdan oynar: yürür, maden toplar, elle üretir, HUB kademelerini sırayla açar. Kaynak hilesi yok; sadece oyun hızını artırabilirsin. Sohbetten: /bot 2, /bot dur, /hiz 4'
+          : 'Botlar tüm kademeleri takım için açar, kendi hileleriyle bedava inşa eder ve maden/üretim/plan/sıvı/tren hatları kurarak sunucuyu zorlar. Sohbetten: /bot stres 2 10, /bot dur, /hiz 2'));
     }
     this.botHeadEl = h('div', { class: 'bot-summary' + (st.warn ? ' bad' : '') }, st.summary || (st.ok || st.fail ? `Son çalışma: ✔${st.ok} ✘${st.fail} modül` : 'Henüz bot çalışmadı.'));
     body.append(this.botHeadEl);

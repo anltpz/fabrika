@@ -18,8 +18,9 @@ import {
   tileKey,
   worldPorts,
 } from '@fabrika/shared';
-import type { BuildingState, ClientMsg, GameMap, PowerNetInfo, ServerMsg, Slot } from '@fabrika/shared';
+import type { BotMode, BuildingState, ClientMsg, CraftJob, GameMap, NestState, PowerNetInfo, ServerMsg, Slot } from '@fabrika/shared';
 import { Brain, TASK_IDS, TASK_NAMES, TaskId } from './brain';
+import type { PlayerBot } from './playerBot';
 
 export type LogKind = 'info' | 'ok' | 'warn' | 'err';
 
@@ -53,6 +54,8 @@ export interface BotRunOptions {
   minutes: number;
   room?: string;
   botKey?: string;
+  /** 'oyun' = hilesiz, sıfırdan oynar; 'stres' = hileli stres testi */
+  mode?: BotMode;
   log: (who: string, msg: string, kind: LogKind) => void;
   onSummary?: (line: string, warn: boolean) => void;
 }
@@ -84,8 +87,10 @@ export class BotRun {
   /** Botları bağlar; oda kodunu döndürür */
   async connect(names: string[]): Promise<string> {
     let room = this.opts.room;
+    // Dinamik içe aktarma: playerBot bu dosyadaki Bot'u genişlettiği için döngüsel bağımlılığı önler
+    const PB = this.opts.mode === 'oyun' ? (await import('./playerBot')).PlayerBot : undefined;
     for (const name of names) {
-      const bot = new Bot(name, this.ctx);
+      const bot = PB ? new PB(name, this.ctx) : new Bot(name, this.ctx);
       room = await bot.connect(room, this.opts.botKey);
       this.bots.push(bot);
       bot.log(`odaya katıldı: ${room} (oyun hızı ${bot.speed}x)`);
@@ -97,6 +102,7 @@ export class BotRun {
   async run(): Promise<void> {
     const b0 = this.bots[0];
     if (!b0) return;
+    if (this.opts.mode === 'oyun') return this.runPlayers();
     for (let i = 0; i < MILESTONES.length; i++) b0.chat('/kademe');
     await b0.flush();
     if (!(await b0.until(() => b0.techDone >= MILESTONES.length, 4000))) {
@@ -109,6 +115,42 @@ export class BotRun {
     const deadline = this.opts.minutes > 0 ? Date.now() + this.opts.minutes * 60_000 : Infinity;
     await Promise.all(this.bots.map((b) => this.loop(b, deadline)));
     this.stop();
+  }
+
+  /** Hilesiz mod: her bot kademe ihtiyaçlarını toplayıp üretir ve HUB'a teslim eder */
+  private async runPlayers(): Promise<void> {
+    const b0 = this.bots[0];
+    b0.log('hilesiz oyun: sıfırdan başlıyor', 'info');
+    this.last = { ticks: b0.ticks, bytes: b0.bytes, at: Date.now() };
+    this.timer = setInterval(() => this.report(), 5000);
+    const deadline = this.opts.minutes > 0 ? Date.now() + this.opts.minutes * 60_000 : Infinity;
+    await Promise.all(this.bots.map((b, i) => wait(i * 400).then(() => this.playerLoop(b as PlayerBot, deadline))));
+    this.stop();
+  }
+
+  private async playerLoop(bot: PlayerBot, deadline: number) {
+    let fails = 0;
+    while (!this.stopped && !bot.closed && Date.now() < deadline) {
+      if (bot.techDone >= MILESTONES.length) { bot.log('🏁 tüm kademeler tamamlandı!', 'ok'); break; }
+      const start = Date.now();
+      const tier = bot.techDone;
+      try {
+        const res = await bot.progressStep();
+        if (this.stopped) break;
+        fails = 0;
+        this.ctx.totals.modulesOk++;
+        bot.log(`✔ ${res} (${((Date.now() - start) / 1000).toFixed(1)} sn)`, 'ok');
+        if (bot.techDone > tier) bot.log(`🎉 kademe tamamlandı: ${MILESTONES[tier].name}`, 'ok');
+      } catch (e) {
+        if (this.stopped) break;
+        fails++;
+        this.ctx.totals.modulesFail++;
+        bot.log(`✘ ${(e as Error).message}`, 'err');
+        bot.stop();
+        await wait(Math.min(15000, 1000 * fails));
+      }
+    }
+    bot.stop();
   }
 
   private async loop(bot: Bot, deadline: number) {
@@ -184,7 +226,9 @@ export class BotRun {
     const belts = all.filter((x) => x.type.startsWith('belt')).length;
     const warn = tps < expected * 0.85 || b.maxTickGap > (1000 / expected) * 6;
     const t = this.ctx.totals;
-    const line = `📊 ${all.length} yapı (${belts} bant) · ${b.trains} tren · tick ${tps.toFixed(1)}/${expected}/sn · en uzun boşluk ${b.maxTickGap} ms · ${kbs.toFixed(1)} KB/sn · ping ${rtt} ms · modül ✔${t.modulesOk} ✘${t.modulesFail} · ${this.brain.stats()}`;
+    const pb = b as Partial<PlayerBot>;
+    const prog = pb.progressSummary ? `${pb.progressSummary.call(b)} · ${pb.status} · ` : '';
+    const line = `📊 ${prog}${all.length} yapı (${belts} bant) · ${b.trains} tren · tick ${tps.toFixed(1)}/${expected}/sn · en uzun boşluk ${b.maxTickGap} ms · ${kbs.toFixed(1)} KB/sn · ping ${rtt} ms · modül ✔${t.modulesOk} ✘${t.modulesFail} · ${this.brain.stats()}`;
     b.maxTickGap = 0;
     this.last = { ticks: b.ticks, bytes: b.bytes, at: now };
     return { line, warn };
@@ -227,6 +271,13 @@ export class Bot {
   history: Array<{ task: TaskId; ok: boolean; msg: string }> = [];
   readonly born = Date.now();
   mine = new Set<number>();
+  hp = 100;
+  enemies: Array<{ id: number; x: number; y: number; hp: number }> = [];
+  nests: NestState[] = [];
+  craftQueue: CraftJob[] = [];
+  techDelivered: Record<string, number> = {};
+  /** Bağlanırken sunucuya bildirilen mod: 'oyun' hilesiz */
+  botMode: BotMode = 'stres';
   private queue: string[] = [];
   private pump?: NodeJS.Timeout;
   private pinger?: NodeJS.Timeout;
@@ -252,7 +303,7 @@ export class Bot {
       this.ws = new WebSocket(this.ctx.url);
       this.ws.on('error', (e) => reject(e));
       this.ws.on('open', () => {
-        this.ws.send(JSON.stringify(room ? { t: 'join', name: this.name, room, botKey } : { t: 'join', name: this.name, create: true, botKey }));
+        this.ws.send(JSON.stringify(room ? { t: 'join', name: this.name, room, botKey, botMode: this.botMode } : { t: 'join', name: this.name, create: true, botKey, botMode: this.botMode }));
       });
       this.ws.on('message', (raw) => {
         const s = String(raw);
@@ -269,10 +320,13 @@ export class Bot {
           for (const k of msg.snap.blasted ?? []) this.map.terrain[Math.floor(k / 4096) * this.map.size + (k % 4096)] = Terrain.Grass;
           this.inv = msg.snap.inventory;
           this.techDone = msg.snap.tech.completed;
+          this.techDelivered = msg.snap.tech.delivered;
+          this.nests = msg.snap.nests;
           this.startPump();
           resolve(this.room);
         }
         this.handle(msg);
+        this.onMessage(msg);
         const ws = this.waiters;
         this.waiters = [];
         for (const w of ws) w();
@@ -294,6 +348,14 @@ export class Bot {
     this.queue.push(JSON.stringify(m));
   }
 
+  /** Kuyruğu atlayarak hemen gönder (hareket girdileri için) */
+  sendNow(m: ClientMsg) {
+    if (this.ws.readyState === WebSocket.OPEN) { this.ws.send(JSON.stringify(m)); this.sent++; }
+  }
+
+  /** Alt sınıfların ek mesaj işleme kancası */
+  protected onMessage(_msg: ServerMsg): void {}
+
   async flush() {
     while (this.queue.length) await wait(20);
   }
@@ -312,7 +374,7 @@ export class Bot {
     for (const [x, y] of footprint(b.type, b.x, b.y, b.rot)) this.occ.set(tileKey(x, y), b.id);
   }
 
-  private handle(msg: ServerMsg) {
+  protected handle(msg: ServerMsg) {
     switch (msg.t) {
       case 'tick': {
         const now = Date.now();
@@ -320,7 +382,8 @@ export class Bot {
         this.lastTickAt = now;
         this.ticks++;
         const me = msg.players?.find((p) => p[0] === this.id);
-        if (me) { this.x = me[1]; this.y = me[2]; }
+        if (me) { this.x = me[1]; this.y = me[2]; this.hp = me[4]; }
+        if (msg.enemies) this.enemies = msg.enemies.map(([id, x, y, hp]) => ({ id, x, y, hp }));
         break;
       }
       case 'buildings':
@@ -333,7 +396,9 @@ export class Bot {
         for (const b of msg.upsert) this.upsert(b);
         break;
       case 'inv': this.inv = msg.inventory; break;
-      case 'tech': this.techDone = msg.tech.completed; break;
+      case 'tech': this.techDone = msg.tech.completed; this.techDelivered = msg.tech.delivered; break;
+      case 'craft': this.craftQueue = msg.queue; break;
+      case 'nests': this.nests = msg.nests; break;
       case 'trains': this.trains = msg.list.length; break;
       case 'power': this.power = msg.nets; break;
       case 'stats': this.stats = { produced: msg.produced, consumed: msg.consumed }; break;

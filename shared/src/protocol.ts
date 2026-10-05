@@ -9,7 +9,7 @@ export interface InputState {
 }
 
 export type ClientMsg =
-  | { t: 'join'; name: string; token?: string; room?: string; create?: boolean; botKey?: string }
+  | { t: 'join'; name: string; token?: string; room?: string; create?: boolean; botKey?: string; botMode?: BotMode }
   | { t: 'input'; input: InputState; angle: number; seq: number }
   | { t: 'chat'; text: string }
   | { t: 'build'; type: string; x: number; y: number; rot: number }
@@ -21,7 +21,7 @@ export type ClientMsg =
   | { t: 'bpPlace'; id: number; x: number; y: number; rot: number }
   | { t: 'bpDelete'; id: number }
   | { t: 'mapPing'; x: number; y: number }
-  | { t: 'botStart'; count: number; minutes: number }
+  | { t: 'botStart'; count: number; minutes: number; mode?: BotMode }
   | { t: 'botStop' }
   | { t: 'setSpeed'; speed: number }
   | { t: 'trainSchedule'; id: number; stops: number[] }
@@ -109,8 +109,12 @@ export interface BotLogLine {
   kind: 'info' | 'ok' | 'warn' | 'err';
 }
 
+/** oyun: hilesiz, sıfırdan oynar · stres: hileli stres testi */
+export type BotMode = 'oyun' | 'stres';
+
 export interface BotStatus {
   running: boolean;
+  mode?: BotMode;
   count: number;
   minutes: number;
   startedAt: number;

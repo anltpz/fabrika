@@ -77,7 +77,8 @@ wss.on('connection', (ws) => {
       const name = String(msg.name ?? '').trim().slice(0, 16) || 'İşçi';
       const r = msg.create ? manager.create() : msg.room ? manager.get(String(msg.room)) : undefined;
       if (!r) { ws.send(JSON.stringify({ t: 'error', msg: 'Oda bulunamadı' })); return; }
-      const res = r.addPlayer(ws, name, typeof msg.token === 'string' ? msg.token : undefined, msg.botKey === BOT_KEY);
+      const isBot = msg.botKey === BOT_KEY;
+      const res = r.addPlayer(ws, name, typeof msg.token === 'string' ? msg.token : undefined, isBot, isBot && msg.botMode !== 'oyun');
       if (typeof res === 'string') { ws.send(JSON.stringify({ t: 'error', msg: res })); return; }
       room = r;
       playerId = res;

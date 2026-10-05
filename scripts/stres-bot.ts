@@ -3,9 +3,10 @@
  *
  * Kullanım:
  *   npm start                                   (normal sunucu yeterli; botların kendi hileleri vardır)
- *   npx tsx scripts/stres-bot.ts [ODA_KODU] [--bot 2] [--sure 10] [--url ws://localhost:3000/ws]
+ *   npx tsx scripts/stres-bot.ts [ODA_KODU] [--mod oyun|stres] [--bot 2] [--sure 10] [--url ws://localhost:3000/ws]
  *
- * Not: Terminalden bağlanan botlar sunucunun gizli bot anahtarını bilmediği için sunucu CHEATS=1 ile açılmalıdır.
+ * --mod oyun (varsayılan): hilesiz, sıfırdan oynar. --mod stres: hileli stres testi; terminalden bağlanan botlar
+ * sunucunun gizli bot anahtarını bilmediği için sunucu CHEATS=1 ile açılmalıdır.
  */
 import { BotRun, LogKind } from '../server/src/bot/stressBot';
 
@@ -23,8 +24,9 @@ function opt(name: string, def: string): string {
 /** Oda kodu 5 karakterlik büyük harf/rakamdır; diğer serbest argümanlar yok sayılır */
 const ROOM = args.find((a, i) => /^[A-Za-z0-9]{5}$/.test(a) && !/^\d+$/.test(a) && !args[i - 1]?.startsWith('--'))?.toUpperCase();
 const BOTS = Math.max(1, Math.min(4, parseInt(opt('bot', '1'), 10) || 1));
-const MINUTES = Math.max(0.5, parseFloat(opt('sure', '10')) || 10);
+const MINUTES = Math.max(0, parseFloat(opt('sure', '10')) || 0);
 const URL = opt('url', 'ws://localhost:3000/ws');
+const MODE = opt('mod', 'oyun') === 'stres' ? 'stres' : 'oyun';
 
 // ---------------------------------------------------------------- günlük
 
@@ -41,12 +43,13 @@ function log(who: string, msg: string, kind: LogKind) {
 }
 
 async function main() {
-  console.log(`${C.bold}Fabrika stres botu${C.off} · ${BOTS} bot · ${MINUTES} dk · ${URL}`);
+  console.log(`${C.bold}Fabrika botu${C.off} · ${MODE === 'oyun' ? 'hilesiz oyun' : 'stres testi'} · ${BOTS} bot · ${MINUTES} dk · ${URL}`);
   const run = new BotRun({
     url: URL,
     count: BOTS,
     minutes: MINUTES,
     room: ROOM,
+    mode: MODE,
     log,
     onSummary: (line, warn) => console.log(`${C.gray}[${stamp()}]${C.off} ${warn ? C.red + '⚠ ' : C.bold}${line}${C.off}`),
   });

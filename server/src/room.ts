@@ -1,5 +1,5 @@
 import { MAX_PLAYERS, TICK_RATE } from '@fabrika/shared';
-import type { BotLogLine, BotStatus, ClientMsg, ServerMsg, Snapshot } from '@fabrika/shared';
+import type { BotLogLine, BotMode, BotStatus, ClientMsg, ServerMsg, Snapshot } from '@fabrika/shared';
 import { BotRun } from './bot/stressBot';
 import type { WebSocket } from 'ws';
 import type { Persistence } from './persistence';
@@ -33,8 +33,8 @@ export class Room {
     return this.bots.has(id);
   }
 
-  addPlayer(ws: WebSocket, name: string, token?: string, isBot = false): number | string {
-    const res = this.world.join(name, token, isBot);
+  addPlayer(ws: WebSocket, name: string, token?: string, isBot = false, botCheats = false): number | string {
+    const res = this.world.join(name, token, isBot, botCheats);
     if (typeof res === 'string') return res;
     const p = res;
     this.sockets.set(p.id, ws);
@@ -93,7 +93,7 @@ export class Room {
       case 'chat':
         if (!this.roomCommand(id, String(msg.text ?? ''))) w.chat(id, msg.text);
         break;
-      case 'botStart': if (!this.bots.has(id)) this.startBots(id, msg.count, msg.minutes); break;
+      case 'botStart': if (!this.bots.has(id)) this.startBots(id, msg.count, msg.minutes, msg.mode ?? 'oyun'); break;
       case 'botStop': if (!this.bots.has(id)) this.stopBots(`${this.world.players.get(id)?.name ?? 'Bir oyuncu'} botları durdurdu`); break;
       case 'setSpeed': if (!this.bots.has(id)) this.setSpeed(id, msg.speed); break;
       case 'build': w.build(id, msg.type, msg.x | 0, msg.y | 0, msg.rot | 0); break;
@@ -128,11 +128,15 @@ export class Room {
     const t = text.trim();
     if (!t.startsWith('/bot') && !t.startsWith('/hiz')) return false;
     if (this.bots.has(id)) return false;
-    const [cmd, a, b] = t.slice(1).split(/\s+/);
+    const parts = t.slice(1).split(/\s+/);
+    // "/bot stres 2 10" → hileli stres testi; "/bot 2 10" → hilesiz oyun
+    const stress = parts[1] === 'stres';
+    if (stress) parts.splice(1, 1);
+    const [cmd, a, b] = parts;
     if (cmd === 'hiz') { this.setSpeed(id, Number(a)); return true; }
     if (cmd === 'bot') {
       if (a === 'dur' || a === 'durdur' || a === 'stop') this.stopBots(`${this.world.players.get(id)?.name} botları durdurdu`);
-      else this.startBots(id, Number(a ?? 1) || 1, Number(b ?? 10));
+      else this.startBots(id, Number(a ?? 1) || 1, Number(b ?? (stress ? 10 : 0)), stress ? 'stres' : 'oyun');
       return true;
     }
     return false;
@@ -152,7 +156,7 @@ export class Room {
     this.sys(`${this.world.players.get(id)?.name ?? 'Biri'} oyun hızını ${s}x yaptı.`);
   }
 
-  startBots(id: number, count: number, minutes: number) {
+  startBots(id: number, count: number, minutes: number, mode: BotMode = 'oyun') {
     if (!this.botCfg) { this.sendTo(id, { t: 'toast', msg: 'Bu sunucuda oyun içi botlar kapalı' }); return; }
     if (this.botRun) { this.sendTo(id, { t: 'toast', msg: 'Botlar zaten çalışıyor' }); return; }
     const free = MAX_PLAYERS - this.world.onlineCount();
@@ -166,6 +170,7 @@ export class Room {
       minutes: mins,
       room: this.code,
       botKey: this.botCfg.key,
+      mode,
       log: (who, msg, kind) => {
         this.botLines.push({ t: Math.floor((Date.now() - started) / 1000), who, msg, kind });
         if (this.botLines.length > 200) this.botLines.splice(0, this.botLines.length - 200);
@@ -176,9 +181,11 @@ export class Room {
       },
     });
     this.botRun = run;
-    this.botStatus = { running: true, count: n, minutes: mins, startedAt: started, summary: 'Botlar bağlanıyor...', warn: false, ok: 0, fail: 0 };
+    this.botStatus = { running: true, mode, count: n, minutes: mins, startedAt: started, summary: 'Botlar bağlanıyor...', warn: false, ok: 0, fail: 0 };
     this.broadcastHumans({ t: 'botStatus', status: this.botStatus });
-    this.sys(`${this.world.players.get(id)?.name} ${n} test botu çağırdı${mins ? ` (${mins} dk)` : ''}. Botlar tüm kademeleri açar ve hızla inşa eder.`);
+    this.sys(mode === 'oyun'
+      ? `${this.world.players.get(id)?.name} ${n} bot çağırdı${mins ? ` (${mins} dk)` : ''}. Botlar hilesiz, sıfırdan oynayıp HUB kademelerini açar.`
+      : `${this.world.players.get(id)?.name} ${n} stres botu çağırdı${mins ? ` (${mins} dk)` : ''}. Botlar tüm kademeleri açar ve hileyle hızla inşa eder.`);
     const names = Array.from({ length: n }, (_, i) => `Bot${i + 1}`);
     run.connect(names)
       .then(() => run.run())
