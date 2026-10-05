@@ -102,6 +102,42 @@ export class Brain {
     }
   }
 
+  /**
+   * Hilesiz botlar için: kodun ürettiği aday işlerden (id → açıklama) birini seçer.
+   * Kod sırası (ilk aday) kural tabanlı tercihtir.
+   */
+  async choose(state: Record<string, unknown>, options: Record<string, string>, fallback: string): Promise<{ id: string; source: 'jev' | 'kural'; confidence?: number; ms?: number; lowConfidence?: boolean; error?: string }> {
+    const ids = Object.keys(options);
+    if (!this.client || ids.length < 2 || Date.now() < this.disabledUntil) return { id: fallback, source: 'kural' };
+    const t0 = Date.now();
+    try {
+      const res = await this.client.systemOne({
+        state: state as never,
+        questions: {
+          next: choice(
+            'Bu bot, çok oyunculu bir fabrika kurma oyununda takım arkadaşı gibi hilesiz oynuyor; amaç HUB kademelerini olabildiğince hızlı tamamlamak. ' +
+              '`kademe.kalan` teslim edilmesi gereken eşyaları, `tesisler` ve `eksik_tesisler` fabrikanın durumunu, `elektrik` gücü, `depo_stogu` eldeki malzemeyi gösteriyor. ' +
+              'Sıradaki en faydalı iş hangisi? Teslim edilebilecek eşya varsa teslimat ilerlemeyi hemen artırır; eksik tesisler uzun vadede üretimi hızlandırır; ' +
+              'girdisi biten hücreleri beslemek makineleri çalıştırır; elle üretim yavaştır ve başka iş yoksa yapılmalıdır.',
+            options,
+          ),
+        },
+      });
+      const ms = Date.now() - t0;
+      this.calls++;
+      this.totalMs += ms;
+      this.tokens += res.usage.input_tokens;
+      const ans = res.answers.next;
+      const id = ans.choice as string;
+      if (ans.confidence < MIN_CONFIDENCE || !ids.includes(id)) return { id: fallback, source: 'kural', confidence: ans.confidence, ms, lowConfidence: true };
+      return { id, source: 'jev', confidence: ans.confidence, ms };
+    } catch (e) {
+      this.failures++;
+      if (this.failures % 3 === 0) this.disabledUntil = Date.now() + 60_000;
+      return { id: fallback, source: 'kural', error: (e as Error).message, ms: Date.now() - t0 };
+    }
+  }
+
   stats(): string {
     if (!this.client) return 'beyin: kural';
     const avg = this.calls ? Math.round(this.totalMs / this.calls) : 0;

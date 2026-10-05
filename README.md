@@ -123,15 +123,37 @@ npm test          # simülasyon testleri (Vitest)
 npm run typecheck
 ```
 
-### Test botları ve oyun hızı (oyun içinden)
+### Botlar ve oyun hızı (oyun içinden)
 
 Sağ üstteki **🤖 Botlar** butonu veya sohbet komutlarıyla:
 
-- **Oyun hızı:** 1x–4x (tüm oda: makineler, bantlar, hareket, trenler). Komut: `/hiz 2`
-- **Bot çağır:** 1–4 bot (oyuncu yeri kaplar), süre 5 dk – süresiz. Komut: `/bot 2 10` (2 bot, 10 dakika), durdurmak için `/bot dur`
+- **Oyun hızı:** 1x–4x (tüm oda: makineler, bantlar, hareket, trenler). Komut: `/hiz 4`
+- **Bot çağır:** 1–4 bot (oyuncu yeri kaplar), süre 5 dk – süresiz. Panelden mod seçilir:
+  - **Gerçek oyun (hilesiz, varsayılan):** `/bot 2` (2 bot, süresiz) veya `/bot 2 30` (30 dakika)
+  - **Stres testi (hileli):** `/bot stres 2 10`
+  - Durdurmak için `/bot dur`
 
-Botlar sunucunun kendi botlarıdır ve sadece kendilerine özel hileleri vardır, normal `npm start` yeterlidir.
-Çağrıldıklarında tüm kademeleri takım için açarlar; döngü halinde maden hatları, akıllı ayırıcı/alt geçitli üretim hücreleri,
+Botlar sunucunun kendi botlarıdır; normal `npm start` yeterlidir.
+
+#### Gerçek oyun modu (hilesiz)
+
+Botlar takım arkadaşı gibi aynı dünyada sıfırdan oynar; kaynak hilesi ve ışınlanma yoktur, sadece oyun hızı artırılabilir.
+Haritada A* ile yürür, böcek yuvalarından uzak durur, cevher toplar, ağaç keser, HUB'da elle üretir ve kademeleri teslim eder.
+Kademeler açıldıkça her adımda dünyadaki yapılardan bir plan çıkarırlar (kalan kademe ihtiyacı − depolardaki stok) ve en faydalı işi yaparlar:
+
+- **Elektrik:** biyokütle jeneratörleri (yakıtı odundan elle üretip doldurur), sonra kömür santrali (maden → ayırıcı → 3 jeneratör),
+  direk zinciriyle şebekeye bağlama, sigorta sıfırlama
+- **Madenler:** düğüm başında maden → fırın/kurucu → depo (demir/bakır külçe, beton) veya ham kaynak deposu (kömür, kuvars, boksit...)
+- **Hücreler:** elle beslenen makine → depo (plaka, çubuk, vida, tel, kablo, rotor, çerçeve, çelik, motor, alüminyum, bilgisayar...)
+- **Petrol:** petrol kuyusu → iki rafineri (plastik, kauçuk)
+- **Lojistik:** madenlerin depolarından girdiyi alıp hücrelere taşır, ürünleri HUB'a teslim eder, fazlayı genel depoya bırakır
+
+Birden çok bot işleri paylaşır (aynı tesisi iki bot kurmaz). Panel özetinde kademe ilerlemesi ve botun o anki işi görünür.
+Jev etkinse, kodun ürettiği aday işlerden (teslimat, tesis kurma, hücre besleme, elle üretim) hangisinin yapılacağını Jev seçer.
+
+#### Stres testi modu (hileli)
+
+Botlar kendilerine özel hilelerle tüm kademeleri açar; döngü halinde maden hatları, akıllı ayırıcı/alt geçitli üretim hücreleri,
 plan kopyaları, petrol/su hatları ve tren hatları kurar; işaret, ping, kargo, yuva saldırısı ve sök/yeniden kur ile sunucuyu zorlarlar.
 Paneldeki canlı günlükte her adım ve 5 saniyede bir özet görünür: yapı/bant/tren sayısı, sunucu tick hızı (beklenen `20 × hız`),
 en uzun tick boşluğu, veri hızı (KB/sn), ping ve başarılı/başarısız modül sayısı. Bitince sohbete rapor düşer.
@@ -153,11 +175,12 @@ TYPESAFE_API_KEY=apikey_...
 `npm start` bu dosyayı otomatik okur ve açılışta `(botlar: Jev)` yazar. `.env` git'e eklenmez; anahtarı kimseyle paylaşma.
 Anahtar yoksa botlar kural tabanlı çalışmaya devam eder.
 
-Terminalden çalıştırmak istersen (sunucu `CHEATS=1` ile açık olmalı):
+Terminalden çalıştırmak istersen:
 
 ```bash
-npx tsx scripts/stres-bot.ts --bot 2 --sure 10        # yeni dünya oluşturur ve oda kodunu yazar
-npx tsx scripts/stres-bot.ts ABCDE --bot 3            # var olan odaya katılır
+npx tsx scripts/stres-bot.ts --bot 2 --sure 10                # hilesiz; yeni dünya oluşturur ve oda kodunu yazar
+npx tsx scripts/stres-bot.ts ABCDE --bot 3 --sure 0           # var olan odaya katılır, süresiz
+npx tsx scripts/stres-bot.ts --mod stres --bot 2 --sure 10    # stres testi (sunucu CHEATS=1 ile açık olmalı)
 ```
 
 Başlangıç hızı ortam değişkeniyle de verilebilir: `GAME_SPEED=2 npm start`.

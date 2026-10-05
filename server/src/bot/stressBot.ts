@@ -20,7 +20,7 @@ import {
 } from '@fabrika/shared';
 import type { BotMode, BuildingState, ClientMsg, CraftJob, GameMap, NestState, PowerNetInfo, ServerMsg, Slot } from '@fabrika/shared';
 import { Brain, TASK_IDS, TASK_NAMES, TaskId } from './brain';
-import type { PlayerBot } from './playerBot';
+import type { Candidate, PlayerBot } from './playerBot';
 
 export type LogKind = 'info' | 'ok' | 'warn' | 'err';
 
@@ -34,6 +34,8 @@ export interface BotContext {
   lines: MineLine[];
   /** Şu an bir botun yürüttüğü onarım görevleri */
   busy: Map<string, string>;
+  /** Hilesiz botlar: kurulamayan tesisler → tekrar denenecek zaman */
+  failed: Map<string, number>;
 }
 
 export interface MineLine {
@@ -70,6 +72,9 @@ export class BotRun {
   private last = { ticks: 0, bytes: 0, at: Date.now() };
   readonly startedAt = Date.now();
   readonly brain = new Brain();
+  private lastAsk = new Map<string, number>();
+  /** Günlükte duyurulan son kademe (birden çok bot aynı anda duyurmasın) */
+  private announced = 0;
 
   constructor(readonly opts: BotRunOptions) {
     const reserved: BotContext['reserved'] = [];
@@ -81,6 +86,7 @@ export class BotRun {
       isReserved: (x, y) => reserved.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1),
       lines: [],
       busy: new Map(),
+      failed: new Map(),
     };
   }
 
@@ -120,12 +126,28 @@ export class BotRun {
   /** Hilesiz mod: her bot kademe ihtiyaçlarını toplayıp üretir ve HUB'a teslim eder */
   private async runPlayers(): Promise<void> {
     const b0 = this.bots[0];
-    b0.log('hilesiz oyun: sıfırdan başlıyor', 'info');
+    this.announced = b0.techDone;
+    b0.log(b0.techDone ? `hilesiz oyun: kademe ${b0.techDone + 1}'den devam ediyor` : 'hilesiz oyun: sıfırdan başlıyor', 'info');
     this.last = { ticks: b0.ticks, bytes: b0.bytes, at: Date.now() };
     this.timer = setInterval(() => this.report(), 5000);
     const deadline = this.opts.minutes > 0 ? Date.now() + this.opts.minutes * 60_000 : Infinity;
     await Promise.all(this.bots.map((b, i) => wait(i * 400).then(() => this.playerLoop(b as PlayerBot, deadline))));
     this.stop();
+  }
+
+  /** Jev'e aday işleri sorar (bot başına en fazla ~8 sn'de bir; arada kod sırası kullanılır) */
+  private async chooseFor(bot: PlayerBot, c: Candidate[]): Promise<Candidate> {
+    const now = Date.now();
+    if (this.brain.mode !== 'jev' || now - (this.lastAsk.get(bot.name) ?? 0) < 8000) return c[0];
+    this.lastAsk.set(bot.name, now);
+    const options: Record<string, string> = {};
+    for (const x of c) options[x.id] = x.desc;
+    const d = await this.brain.choose(bot.planState(), options, c[0].id);
+    const pick = c.find((x) => x.id === d.id) ?? c[0];
+    if (d.source === 'jev') bot.log(`🧠 Jev → ${pick.desc} (güven ${(d.confidence ?? 0).toFixed(2)}, ${d.ms} ms)`, 'info');
+    else if (d.lowConfidence) bot.log(`🧠 Jev emin değil (güven ${(d.confidence ?? 0).toFixed(2)}) → kural: ${pick.desc}`, 'warn');
+    else if (d.error) bot.log(`🧠 Jev'e ulaşılamadı (${d.error}) → kural`, 'warn');
+    return pick;
   }
 
   private async playerLoop(bot: PlayerBot, deadline: number) {
@@ -135,12 +157,13 @@ export class BotRun {
       const start = Date.now();
       const tier = bot.techDone;
       try {
-        const res = await bot.progressStep();
+        const res = await bot.think((c) => this.chooseFor(bot, c));
         if (this.stopped) break;
         fails = 0;
+        if (!res) continue;
         this.ctx.totals.modulesOk++;
         bot.log(`✔ ${res} (${((Date.now() - start) / 1000).toFixed(1)} sn)`, 'ok');
-        if (bot.techDone > tier) bot.log(`🎉 kademe tamamlandı: ${MILESTONES[tier].name}`, 'ok');
+        if (bot.techDone > this.announced) { this.announced = bot.techDone; bot.log(`🎉 kademe tamamlandı: ${MILESTONES[tier].name}`, 'ok'); }
       } catch (e) {
         if (this.stopped) break;
         fails++;
@@ -331,7 +354,7 @@ export class Bot {
         this.waiters = [];
         for (const w of ws) w();
       });
-      this.ws.on('close', () => { if (!this.closed) this.log('bağlantı kapandı', 'err'); });
+      this.ws.on('close', () => { if (!this.closed) { this.log('bağlantı kapandı', 'err'); this.closed = true; } });
     });
   }
 
