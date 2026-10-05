@@ -1,0 +1,13 @@
+services:
+  fabrika:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - fabrika-saves:/data
+    environment:
+      - CHEATS=0
+    restart: unless-stopped
+
+volumes:
+  fabrika-saves:
