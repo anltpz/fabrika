@@ -14,6 +14,7 @@ export const TASKS = {
   sivi_hatti: 'Petrol kuyusu, boru, rafineri ve yakıt jeneratöründen oluşan bir sıvı hattı kurmak',
   tren_hatti: 'İki istasyon, kavisli ray ve lokomotiften oluşan bir tren hattı kurup eşya taşıtmak',
   enerji_onarimi: 'Elektrik sorunlarını gidermek: yakıtı biten jeneratörlere yakıt koymak, sigortası atan ağlara jeneratör ekleyip sigortayı sıfırlamak',
+  darbogaz_onarimi: 'İstatistikteki darboğazları gidermek: girdisi boş kalan üretim hücresi depolarına girdi koymak, çıkışı tıkanan maden hatlarına ayırıcı ve ek işleme makinesi ekleyerek hattı dengelemek',
   etkilesim: 'Harita işareti, ping, sohbet, elle üretim, kargo açma ve böcek yuvasına saldırı gibi oyuncu etkileşimlerini denemek',
   calkalama: 'Kurulu yapıları söküp yeniden kurarak ve tarif değiştirerek sunucunun durum senkronunu zorlamak',
 } as const;
@@ -28,6 +29,7 @@ export const TASK_NAMES: Record<TaskId, string> = {
   sivi_hatti: 'sıvı hattı',
   tren_hatti: 'tren hattı',
   enerji_onarimi: 'enerji onarımı',
+  darbogaz_onarimi: 'darboğaz onarımı',
   etkilesim: 'etkileşim',
   calkalama: 'çalkalama',
 };
@@ -74,8 +76,8 @@ export class Brain {
         questions: {
           next: choice(
             'Bu bot, çok oyunculu bir fabrika kurma oyununu test eden ve fabrikayı büyüten bir yardımcıdır. ' +
-              '`fabrika`, `sorunlar`, `elektrik`, `uretim_acigi` ve `son_gorevler` alanlarındaki duruma bakarak sıradaki en faydalı görev hangisi? ' +
-              'Önce çalışmayı engelleyen sorunlar (sigorta, yakıt, enerji) giderilmeli; yakın zamanda başarısız olan veya az önce yapılan görevlerin tekrarı daha az faydalıdır; ' +
+              '`fabrika`, `sorunlar`, `elektrik`, `darbogazlar`, `uretim_acigi` ve `son_gorevler` alanlarındaki duruma bakarak sıradaki en faydalı görev hangisi? ' +
+              'Önce çalışmayı engelleyen sorunlar (sigorta, yakıt, enerji) giderilmeli, sonra darboğazlar (girdisi boş hücreler, tıkanan hatlar); yakın zamanda başarısız olan veya az önce yapılan görevlerin tekrarı daha az faydalıdır; ' +
               'henüz hiç denenmemiş sistemleri (sıvı, tren, plan) denemek test için değerlidir.',
             criteria,
           ),

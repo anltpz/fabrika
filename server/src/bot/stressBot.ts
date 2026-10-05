@@ -7,6 +7,8 @@
 import WebSocket from 'ws';
 import {
   BUILDINGS,
+  DX,
+  DY,
   MILESTONES,
   TICK_RATE,
   Terrain,
@@ -14,6 +16,7 @@ import {
   footprintSize,
   generateMap,
   tileKey,
+  worldPorts,
 } from '@fabrika/shared';
 import type { BuildingState, ClientMsg, GameMap, PowerNetInfo, ServerMsg, Slot } from '@fabrika/shared';
 import { Brain, TASK_IDS, TASK_NAMES, TaskId } from './brain';
@@ -26,6 +29,19 @@ export interface BotContext {
   totals: { modulesOk: number; modulesFail: number; toasts: Map<string, number> };
   reserved: Array<{ x0: number; y0: number; x1: number; y1: number }>;
   isReserved: (x: number, y: number) => boolean;
+  /** Botların kurduğu maden hatları (darboğaz onarımı yerleşimi bilir) */
+  lines: MineLine[];
+  /** Şu an bir botun yürüttüğü onarım görevleri */
+  busy: Map<string, string>;
+}
+
+export interface MineLine {
+  x: number;
+  y: number;
+  item: string;
+  machine?: string;
+  recipe?: string;
+  balanced: boolean;
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -60,6 +76,8 @@ export class BotRun {
       totals: { modulesOk: 0, modulesFail: 0, toasts: new Map() },
       reserved,
       isReserved: (x, y) => reserved.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1),
+      lines: [],
+      busy: new Map(),
     };
   }
 
@@ -101,6 +119,7 @@ export class BotRun {
       sivi_hatti: () => bot.fluidLine(),
       tren_hatti: () => bot.trainLine(),
       enerji_onarimi: () => bot.repairPower(),
+      darbogaz_onarimi: () => bot.repairBottlenecks(),
       etkilesim: () => bot.noise(),
       calkalama: () => bot.churn(),
     };
@@ -108,15 +127,21 @@ export class BotRun {
     while (!this.stopped && !bot.closed && Date.now() < deadline) {
       // Kod kuralları: imkânsız veya art arda başarısız görevleri seçeneklerden çıkar
       const problems = bot.powerProblems();
+      const jams = bot.bottlenecks();
       const allowed = TASK_IDS.filter((id) => {
         if (id === 'plan_stresi' && !bot.blueprints.length) return false;
         if (id === 'calkalama' && !bot.mine.size) return false;
         if (id === 'enerji_onarimi' && !problems.total) return false;
+        if (id === 'darbogaz_onarimi' && !jams.fixable) return false;
+        const owner = this.ctx.busy.get(id);
+        if (owner && owner !== bot.name) return false;
         const recent = bot.history.filter((h) => h.task === id).slice(-2);
         return !(recent.length === 2 && recent.every((h) => !h.ok));
       });
-      const roundRobin = TASK_IDS.filter((id) => allowed.includes(id) && id !== 'enerji_onarimi');
-      const fallback: TaskId = problems.total ? 'enerji_onarimi' : roundRobin[rr++ % Math.max(1, roundRobin.length)] ?? 'etkilesim';
+      const roundRobin = TASK_IDS.filter((id) => allowed.includes(id) && id !== 'enerji_onarimi' && id !== 'darbogaz_onarimi');
+      const fallback: TaskId = allowed.includes('enerji_onarimi') ? 'enerji_onarimi'
+        : allowed.includes('darbogaz_onarimi') ? 'darbogaz_onarimi'
+        : roundRobin[rr++ % Math.max(1, roundRobin.length)] ?? 'etkilesim';
       const d = await this.brain.decide(bot.gameState(), allowed, fallback);
       if (this.stopped) break;
       const name = TASK_NAMES[d.task];
@@ -128,6 +153,8 @@ export class BotRun {
         bot.log(`🧠 Jev'e ulaşılamadı (${d.error}) → kural: ${name}`, 'warn');
       }
       const start = Date.now();
+      const repair = d.task === 'enerji_onarimi' || d.task === 'darbogaz_onarimi';
+      if (repair) this.ctx.busy.set(d.task, bot.name);
       try {
         const res = await Promise.race([run[d.task](), wait(90000).then(() => { throw new Error('zaman aşımı'); })]);
         if (this.stopped) break;
@@ -140,6 +167,7 @@ export class BotRun {
         bot.history.push({ task: d.task, ok: false, msg: (e as Error).message });
         bot.log(`✘ ${name}: ${(e as Error).message}`, 'err');
       }
+      if (repair && this.ctx.busy.get(d.task) === bot.name) this.ctx.busy.delete(d.task);
       if (bot.history.length > 30) bot.history.shift();
     }
   }
@@ -475,6 +503,7 @@ export class Bot {
     await this.build('power_pole', x + 3, y + 2);
     const gen = await this.build('biomass_burner', x, y + 2);
     await this.put(gen, 'biomass', 50);
+    this.ctx.lines.push({ x, y, item: node.item, machine: recipe ? (recipe === 'concrete' ? 'constructor' : 'smelter') : undefined, recipe, balanced: false });
     return `${node.item} hattı kuruldu`;
   }
 
@@ -725,6 +754,7 @@ export class Bot {
         makine_durumlari: status,
       },
       elektrik: { kapasite_mw: cap, tuketim_mw: use, ag_sayisi: this.power.length },
+      darbogazlar: (() => { const j = this.bottlenecks(); return { girdisi_bos_hucre: j.emptyCells.length, tikanan_maden_hatti: j.jammedLines.length, girdi_bekleyen_rafineri: j.starvedRefineries }; })(),
       uretim_acigi: deficits,
       son_gorevler: this.history.slice(-6).map((h) => ({ gorev: TASK_NAMES[h.task], sonuc: h.ok ? 'başarılı' : 'başarısız', not: h.msg.slice(0, 80) })),
       gorev_gecmisi: Object.fromEntries(TASK_IDS.map((t) => [TASK_NAMES[t], lastOf(t)])),
@@ -787,8 +817,80 @@ export class Bot {
       connected++;
     }
     await this.flush();
-    if (!fueled && !added && !reset && !connected) return 'onarılacak elektrik sorunu yok';
+    if (!fueled && !added && !reset && !connected) {
+      if (this.powerProblems().total) throw new Error('elektrik sorunu var ama çözülemedi (yer yok veya ulaşılamıyor)');
+      return 'onarılacak elektrik sorunu yok';
+    }
     return `${fueled} jeneratöre yakıt, ${added} yeni jeneratör, ${reset} sigorta sıfırlandı, ${connected} makine ağa bağlandı`;
+  }
+
+  /** Kodla sayılan darboğazlar */
+  bottlenecks() {
+    const emptyCells: BuildingState[] = [];
+    for (const sp of this.buildings.values()) {
+      if (sp.type !== 'smart_splitter') continue;
+      const port = worldPorts(sp.type, sp.x, sp.y, sp.rot, 'inputs')[0];
+      const src = this.at(port.x + DX[port.dir], port.y + DY[port.dir]);
+      if (src?.type !== 'storage') continue;
+      const items = (src.storage ?? []).reduce((n, q) => n + (q?.count ?? 0), 0);
+      if (items < 50) emptyCells.push(src);
+    }
+    const jammedLines = this.ctx.lines.filter((l) => {
+      if (l.balanced || !l.machine) return false;
+      const m = this.at(l.x, l.y);
+      return !!m && m.type.startsWith('miner') && m.status === 'full';
+    });
+    let starvedRefineries = 0;
+    for (const b of this.buildings.values()) if (b.type === 'refinery' && b.status === 'noinput') starvedRefineries++;
+    return { emptyCells, jammedLines, starvedRefineries, fixable: emptyCells.length + jammedLines.length };
+  }
+
+  /** Tile inşa edilebilir mi (ayrılmış alan kontrolü olmadan; ağaç ve kaya temizlenebilir sayılır) */
+  private buildable(x: number, y: number): boolean {
+    const m = this.map;
+    if (x < 3 || y < 3 || x >= m.size - 3 || y >= m.size - 3) return false;
+    if (m.terrain[y * m.size + x] === Terrain.Water) return false;
+    if (m.nodeAt.has(tileKey(x, y)) || m.loot.some((l) => l.x === x && l.y === y)) return false;
+    return !this.occ.has(tileKey(x, y));
+  }
+
+  /** Darboğaz onarımı: boş hücre depolarına girdi, tıkanan maden hatlarına ikinci işleme kolu */
+  async repairBottlenecks(): Promise<string> {
+    const j = this.bottlenecks();
+    let filled = 0, balanced = 0;
+    for (const src of j.emptyCells.slice(0, 5)) {
+      await this.tp(src.x + 1, src.y + 3.6);
+      await this.put(this.at(src.x, src.y), 'iron_ingot', 100);
+      await this.put(this.at(src.x, src.y), 'iron_plate', 50);
+      filled++;
+    }
+    for (const line of j.jammedLines.slice(0, 1)) {
+      const { x, y } = line;
+      const need: Array<[number, number]> = [[x + 3, y - 1], [x + 3, y - 2], [x + 4, y - 2], [x + 5, y - 2], [x + 4, y - 1], [x + 5, y - 1], [x + 6, y - 2], [x + 6, y - 1]];
+      if (!need.every(([tx, ty]) => this.buildable(tx, ty))) {
+        line.balanced = true; // yer yok: bu hat için tekrar deneme
+        this.log(`hat ${x},${y} dengelenemedi: kuzeyde yer yok`, 'warn');
+        continue;
+      }
+      await this.clear({ x: x + 3, y: y - 2, w: 4, h: 2 });
+      await this.tp(x + 4.5, y + 3.5);
+      const belt = this.at(x + 3, y);
+      if (belt?.type.startsWith('belt')) {
+        this.send({ t: 'dismantle', id: belt.id });
+        await this.flush();
+        await this.until(() => !this.at(x + 3, y), 2000);
+      }
+      if (!(await this.build('splitter', x + 3, y))) continue;
+      await this.path('belt_mk1', [{ x: x + 3, y: y - 1, dir: 3 }, { x: x + 3, y: y - 2, dir: 0 }]);
+      const m2 = await this.build(line.machine!, x + 4, y - 2);
+      if (m2 && line.recipe) this.send({ t: 'setRecipe', id: m2.id, recipe: line.recipe });
+      await this.path('belt_mk1', [{ x: x + 6, y: y - 2, dir: 1 }, { x: x + 6, y: y - 1, dir: 1 }]);
+      line.balanced = true;
+      if (m2) balanced++;
+    }
+    await this.flush();
+    if (!filled && !balanced) throw new Error(j.starvedRefineries ? `${j.starvedRefineries} rafineri girdi bekliyor, bot çözemiyor` : 'çözülebilir darboğaz bulunamadı');
+    return `${filled} hücreye girdi kondu, ${balanced} maden hattına ikinci işleme kolu eklendi${j.starvedRefineries ? `, ${j.starvedRefineries} rafineri çözülemedi` : ''}`;
   }
 
   async churn(): Promise<string> {
